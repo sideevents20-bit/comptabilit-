@@ -798,29 +798,20 @@ def traiter_facture(chemin_pdf: Path, email_info: dict, config: dict,
         return False
 
 
-def main() -> int:
-    """Point d'entrée : relève les emails puis traite chaque facture."""
-    configurer_logging()
-    logger.info("=" * 70)
-    logger.info("Démarrage du traitement automatique des factures.")
+def executer_traitement(config: dict) -> tuple[int, int]:
+    """
+    Exécute un cycle complet de relève et de traitement des factures.
 
-    try:
-        config = charger_configuration()
-    except RuntimeError as erreur:
-        logger.error("%s", erreur)
-        return 1
-
+    Fonction partagée entre le mode terminal (main) et l'application
+    de bureau (application.py). Retourne (nb_succès, nb_échecs).
+    Lève imaplib.IMAP4.error / OSError si la connexion échoue.
+    """
     # Préparation des dossiers de travail.
     config["dossier_temp"].mkdir(parents=True, exist_ok=True)
     config["dossier_base"].mkdir(parents=True, exist_ok=True)
 
     clients = charger_clients(config["fichier_clients"])
-
-    try:
-        connexion = connecter_imap(config)
-    except (imaplib.IMAP4.error, OSError) as erreur:
-        logger.error("Connexion IMAP impossible : %s", erreur)
-        return 1
+    connexion = connecter_imap(config)
 
     succes, echecs = 0, 0
     try:
@@ -847,6 +838,27 @@ def main() -> int:
             pass
 
     logger.info("Traitement terminé : %d succès, %d échec(s).", succes, echecs)
+    return succes, echecs
+
+
+def main() -> int:
+    """Point d'entrée en ligne de commande."""
+    configurer_logging()
+    logger.info("=" * 70)
+    logger.info("Démarrage du traitement automatique des factures.")
+
+    try:
+        config = charger_configuration()
+    except RuntimeError as erreur:
+        logger.error("%s", erreur)
+        return 1
+
+    try:
+        _, echecs = executer_traitement(config)
+    except (imaplib.IMAP4.error, OSError) as erreur:
+        logger.error("Connexion IMAP impossible : %s", erreur)
+        return 1
+
     logger.info("=" * 70)
     return 0 if echecs == 0 else 2
 

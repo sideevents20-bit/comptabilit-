@@ -38,6 +38,8 @@ Règles de sécurité intégrées :
 ### 1. Prérequis
 
 - Python **3.10 ou plus** (`python3 --version` pour vérifier).
+- Pour l'application de bureau : Tkinter, inclus d'office avec Python sous
+  Windows et macOS ; sous Linux : `sudo apt install python3-tk`.
 
 ### 2. Récupérer le projet et créer un environnement virtuel
 
@@ -135,7 +137,26 @@ Le script cherche ces noms dans le texte du PDF pour savoir à qui appartient
 chaque facture. Une facture dont le client n'est pas reconnu est classée dans
 `Factures_Clients/_A_CLASSER/`.
 
-### 6. Lancer le script
+### 6. Lancer l'application
+
+**Application de bureau (recommandé)** :
+
+```bash
+python application.py
+```
+
+Sous Windows, double-cliquez simplement sur **`Lancer_Factures.bat`**
+(vous pouvez en créer un raccourci sur le Bureau).
+
+L'application permet de :
+- lancer la relève d'un clic (« 📥 Relever les factures ») sans figer la fenêtre ;
+- consulter l'historique des factures traitées (contenu du tableau Excel) ;
+- voir en un coup d'œil les factures **à vérifier manuellement** (échecs) ;
+- ouvrir directement le tableau TVA, le dossier des factures classées,
+  le dossier « à vérifier » et la liste des clients ;
+- suivre le journal en direct (les erreurs apparaissent en rouge).
+
+**Mode terminal** (pour l'automatisation planifiée) :
 
 ```bash
 python traitement_factures.py
