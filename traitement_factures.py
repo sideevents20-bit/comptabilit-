@@ -137,13 +137,16 @@ def charger_configuration() -> dict:
     return config
 
 
-def charger_clients(fichier_clients: Path) -> list[str]:
+def charger_clients(fichier_clients: Path) -> list[tuple[str, str]]:
     """
-    Charge la liste des clients (un nom par ligne, '#' pour commenter).
+    Charge la liste des clients ('#' pour commenter). Deux syntaxes :
 
-    Cette liste sert à identifier à quel client appartient chaque facture :
-    le nom du client doit apparaître dans le texte du PDF (adresse de
-    facturation, ligne "Client :", etc.).
+        ICG 40                          -> nom unique
+        ICG 40 = ICG40, SARL ICG 40     -> nom du dossier + variantes
+
+    Retourne une liste de couples (variante_cherchée, nom_canonique) :
+    chaque variante trouvée dans un PDF rattache la facture au même
+    dossier client (le nom canonique, à gauche du '=').
     """
     if not fichier_clients.exists():
         logger.warning(
@@ -155,9 +158,22 @@ def charger_clients(fichier_clients: Path) -> list[str]:
     clients = []
     for ligne in fichier_clients.read_text(encoding="utf-8").splitlines():
         ligne = ligne.strip()
-        if ligne and not ligne.startswith("#"):
-            clients.append(ligne)
-    logger.info("%d client(s) chargé(s) depuis %s", len(clients), fichier_clients)
+        if not ligne or ligne.startswith("#"):
+            continue
+        if "=" in ligne:
+            canonique, variantes = ligne.split("=", 1)
+            canonique = canonique.strip()
+            clients.append((canonique, canonique))
+            for variante in variantes.split(","):
+                if variante.strip():
+                    clients.append((variante.strip(), canonique))
+        else:
+            clients.append((ligne, ligne))
+    nb_canoniques = len({c for _, c in clients})
+    logger.info(
+        "%d client(s) chargé(s) (%d variante(s)) depuis %s",
+        nb_canoniques, len(clients), fichier_clients,
+    )
     return clients
 
 
@@ -488,16 +504,16 @@ def _construire_date(groupes: tuple) -> str | None:
         return None
 
 
-def identifier_client(texte: str, clients: list[str]) -> str | None:
+def identifier_client(texte: str, clients: list[tuple[str, str]]) -> str | None:
     """
-    Identifie le client destinataire de la facture : premier nom de la
-    liste clients.txt présent dans le texte du PDF (comparaison sans
-    casse ni accents).
+    Identifie le client de la facture : première variante de clients.txt
+    présente dans le texte du PDF (comparaison sans casse ni accents).
+    Retourne le nom canonique du client (celui du dossier de classement).
     """
     texte_norm = normaliser(texte)
-    for client in clients:
-        if normaliser(client) in texte_norm:
-            return client
+    for variante, canonique in clients:
+        if normaliser(variante) in texte_norm:
+            return canonique
     return None
 
 

@@ -61,8 +61,8 @@ def test_facture_standard():
     assert m["tva"] == {"20": 220.00, "10": None, "5.5": 11.00}
     assert m["total_ttc"] == 1431.00
     assert extraire_date_facture(FACTURE_STANDARD) == "2026-06-28"
-    assert identifier_client(FACTURE_STANDARD, ["SARL Dupont Consulting"]) \
-        == "SARL Dupont Consulting"
+    clients = [("SARL Dupont Consulting", "SARL Dupont Consulting")]
+    assert identifier_client(FACTURE_STANDARD, clients) == "SARL Dupont Consulting"
     assert identifier_fournisseur(FACTURE_STANDARD) == "FOURNITOUT SARL"
 
 
@@ -207,6 +207,14 @@ def test_date_iso():
 # ---------------------------------------------------------------------------
 # Noms de fichiers/dossiers
 # ---------------------------------------------------------------------------
+
+def test_identifier_client_variantes():
+    # Toutes les variantes doivent renvoyer le même nom canonique de dossier.
+    clients = [("ICG 40", "ICG 40"), ("ICG40", "ICG 40"), ("SARL ICG 40", "ICG 40")]
+    assert identifier_client("Facturé à : ICG40, Gabarret", clients) == "ICG 40"
+    assert identifier_client("SARL ICG 40 — chantier Tesla", clients) == "ICG 40"
+    assert identifier_client("Client inconnu SAS", clients) is None
+
 
 def test_nettoyer_nom_fichier():
     assert nettoyer_nom_fichier("SARL Dupont & Cie / Été") == "SARL_Dupont_Cie_Ete"

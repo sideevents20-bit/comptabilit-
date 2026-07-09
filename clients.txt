@@ -1,7 +1,6 @@
 # Liste des clients du centre d'affaires — un nom par ligne.
 # Le script cherche ces noms dans le texte des factures pour les classer.
 # Les lignes commençant par # sont ignorées.
-# Exemples (à remplacer par vos vrais clients) :
-SARL Dupont Consulting
-SAS Martin & Fils
-EURL Belle Etoile
+# Syntaxe : soit un simple nom, soit "Nom du dossier = variante1, variante2"
+# quand le client apparaît sous plusieurs formes sur les factures.
+ICG 40 = ICG40, I.C.G. 40, SARL ICG 40

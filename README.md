@@ -122,10 +122,18 @@ alias donné (ex : `adresse+factures@gmail.com`).
 
 ### 5. Déclarer vos clients
 
-Éditez `clients.txt` : **un nom de client par ligne** (tel qu'il apparaît sur
-les factures — raison sociale de préférence). Le script cherche ces noms dans
-le texte du PDF pour savoir à qui appartient chaque facture. Une facture dont
-le client n'est pas reconnu est classée dans `Factures_Clients/_A_CLASSER/`.
+Éditez `clients.txt` : **un client par ligne**, tel qu'il apparaît sur les
+factures. Si un client apparaît sous plusieurs formes, listez-les après un
+`=` — toutes les variantes seront classées dans le même dossier :
+
+```
+ICG 40 = ICG40, I.C.G. 40, SARL ICG 40
+SCI LANGON
+```
+
+Le script cherche ces noms dans le texte du PDF pour savoir à qui appartient
+chaque facture. Une facture dont le client n'est pas reconnu est classée dans
+`Factures_Clients/_A_CLASSER/`.
 
 ### 6. Lancer le script
 
