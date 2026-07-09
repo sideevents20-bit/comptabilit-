@@ -94,40 +94,31 @@ doit être installé sur la machine :
 Sans Tesseract, le script fonctionne quand même : les PDF scannés sont
 simplement signalés en échec et conservés dans `_temp_factures/`.
 
-### 4 bis. (Recommandé) Adresse email dédiée aux factures
+### 4 bis. La boîte dédiée aux factures : mtgsud.compta@gmail.com
 
-Recevoir les factures sur une adresse dédiée fiabilise le tri : plus de faux
-positifs, et vos fournisseurs ont une adresse unique à retenir. Trois options,
-de la plus simple à la plus professionnelle :
+Le traitement utilise une boîte Gmail entièrement dédiée aux factures :
+**`mtgsud.compta@gmail.com`**. Tout ce qui y arrive est une facture (ou un
+transfert de facture), ce qui rend le tri fiable à 100 %.
 
-**Option A — Alias Gmail « +factures » (gratuit, immédiat)**
-Gmail livre tout email envoyé à `votreadresse+factures@gmail.com` dans votre
-boîte habituelle. Rien à créer côté compte :
+Mise en service du compte (une seule fois) :
 
-1. Communiquez `votreadresse+factures@gmail.com` à vos fournisseurs.
-2. Dans Gmail → ⚙️ → *Voir tous les paramètres* → *Filtres et adresses
-   bloquées* → *Créer un filtre* : champ **À** = `votreadresse+factures@gmail.com`
-   → *Appliquer le libellé* **Factures** (et éventuellement *Ne pas afficher
-   dans la boîte de réception* pour ne pas polluer votre boîte principale).
-3. Dans `.env` :
-   ```
-   FILTRE_DESTINATAIRE=votreadresse+factures@gmail.com
-   IMAP_FOLDER=Factures        # si vous avez créé le filtre + libellé
-   ```
+1. Connectez-vous à `mtgsud.compta@gmail.com` sur https://myaccount.google.com
+2. **Sécurité** → activez la **Validation en deux étapes**.
+3. Toujours dans Sécurité → **Mots de passe des applications** → créez-en un
+   (nom libre, ex. « script factures »). Google affiche un code de
+   16 caractères : c'est lui qu'il faut mettre dans `IMAP_PASSWORD` du `.env`.
+4. Vérifiez que IMAP est actif : Gmail → ⚙️ → *Voir tous les paramètres* →
+   *Transfert et POP/IMAP* → *Activer IMAP* (actif par défaut sur les
+   comptes récents).
+5. Communiquez l'adresse à vos fournisseurs, ou transférez-y vos factures
+   depuis votre boîte principale.
 
-**Option B — Compte Gmail séparé** (ex : `factures.moncentre@gmail.com`) :
-créez le compte sur gmail.com, activez la validation en deux étapes, générez
-un mot de passe d'application, et mettez ces identifiants dans le `.env`.
-`IMAP_FOLDER=INBOX` suffit alors, tout ce qui arrive est une facture.
+> Astuce : les emails **transférés** (objet « Fwd: ... ») sont traités comme
+> les autres — c'est la pièce jointe PDF qui compte, pas l'objet.
 
-**Option C — Adresse sur votre propre domaine** (ex :
-`factures@moncentre.fr`) : à créer chez votre hébergeur (OVH, Gandi,
-Google Workspace...). C'est l'option la plus professionnelle ; renseignez
-ensuite `IMAP_HOST` / `IMAP_USER` / `IMAP_PASSWORD` du fournisseur dans `.env`.
-
-> `FILTRE_DESTINATAIRE` restreint la relève aux emails **adressés à** cette
-> adresse (en-tête `To`). Combiné au libellé Gmail (`IMAP_FOLDER=Factures`),
-> le tri est doublement sécurisé.
+Si un jour vous relevez une boîte partagée plutôt que dédiée, la variable
+`FILTRE_DESTINATAIRE` permet de ne traiter que les emails adressés à un
+alias donné (ex : `adresse+factures@gmail.com`).
 
 ### 5. Déclarer vos clients
 
