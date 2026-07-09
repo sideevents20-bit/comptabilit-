@@ -54,6 +54,23 @@ import traitement_factures as moteur  # noqa: E402
 
 TITRE = "Traitement des factures"
 
+# Palette minimaliste : fond neutre, surfaces blanches, un seul accent bleu.
+COULEURS = {
+    "fond": "#f5f6f8",          # arrière-plan général
+    "surface": "#ffffff",       # cartes, tableaux, champs
+    "bordure": "#e3e6ea",       # séparations discrètes
+    "entete": "#eef1f5",        # en-têtes de tableaux
+    "texte": "#1f2430",         # texte principal
+    "texte_doux": "#6a7280",    # texte secondaire
+    "accent": "#3565d8",        # bleu d'action
+    "accent_fonce": "#2a51ad",  # bleu d'action (survol/clic)
+    "accent_clair": "#e8eefb",  # sélection, surlignages
+    "raye": "#f7f8fa",          # lignes paires des tableaux
+    "ok": "#1e7a44",
+    "alerte": "#8a6d00",
+    "erreur": "#b3261e",
+}
+
 # Champs de l'écran de réglages : (clé .env, libellé, valeur par défaut, secret)
 CHAMPS_REGLAGES = [
     ("IMAP_HOST", "Serveur IMAP", "imap.gmail.com", False),
@@ -66,6 +83,99 @@ CHAMPS_REGLAGES = [
     ("DOSSIER_TEMP", "Dossier temporaire / à vérifier", "./_temp_factures", False),
     ("FICHIER_EXCEL", "Tableau Excel de TVA", "./tableau_tva_global.xlsx", False),
     ("FICHIER_CLIENTS", "Liste des clients", "./clients.txt", False),
+]
+
+
+# Contenu de l'onglet Tutoriel : liste de (style, texte).
+TUTORIEL = [
+    ("titre", "Guide d'utilisation"),
+    ("doux", "Tout ce qu'il faut savoir pour traiter vos factures, de la "
+             "première configuration au tableau de TVA."),
+
+    ("titre", "1. Première configuration (une seule fois)"),
+    ("etape", "①  Ouvrez ⚙️ Réglages (l'écran s'ouvre tout seul au premier "
+              "lancement)."),
+    ("etape", "②  Le mot de passe demandé n'est PAS celui de la boîte Gmail : "
+              "c'est un « mot de passe d'application » de 16 caractères."),
+    ("etape", "③  Pour le créer : connectez-vous au compte Google de la boîte "
+              "factures → Sécurité → activez la Validation en deux étapes → "
+              "Mots de passe des applications → créez-en un (nom libre)."),
+    ("etape", "④  Collez le code dans le champ, cliquez « Tester la "
+              "connexion » : un message vert confirme que tout fonctionne."),
+    ("etape", "⑤  Cliquez « Enregistrer ». C'est terminé."),
+
+    ("titre", "2. Relever les factures"),
+    ("normal", "Cliquez sur le bouton bleu 📥 Relever les factures : "
+               "l'application se connecte à la boîte email, télécharge les "
+               "PDF des emails non lus, lit chaque facture (montants, TVA, "
+               "date, client, fournisseur), la range dans le dossier du "
+               "client et remplit le tableau Excel."),
+    ("puce", "•  Un email n'est marqué « lu » que si toutes ses factures ont "
+             "été traitées : en cas d'échec, il sera retenté au prochain "
+             "passage."),
+    ("puce", "•  Cochez « Relève automatique » pour que l'application relève "
+             "la boîte toute seule à intervalle régulier tant qu'elle est "
+             "ouverte."),
+    ("puce", "•  📄 Traiter des PDF... permet d'importer des factures depuis "
+             "votre ordinateur, sans passer par l'email (l'original n'est "
+             "jamais déplacé)."),
+
+    ("titre", "3. L'onglet « Factures traitées »"),
+    ("puce", "•  Tapez dans le champ 🔍 pour filtrer par client, fournisseur "
+             "ou nom de fichier."),
+    ("puce", "•  Double-cliquez sur une ligne pour ouvrir le PDF classé."),
+    ("puce", "•  Les factures sont rangées dans Factures_Clients\\<Client>\\ "
+             "et renommées : AAAA-MM-JJ_Fournisseur_MontantTTC.pdf."),
+
+    ("titre", "4. L'onglet « À vérifier » : les échecs"),
+    ("normal", "Quand une facture ne peut pas être lue automatiquement "
+               "(scan de mauvaise qualité, format inhabituel), elle atterrit "
+               "ici au lieu d'être classée. Rien n'est perdu :"),
+    ("etape", "①  Sélectionnez la facture, cliquez « 👁 Ouvrir le PDF » pour "
+              "la lire."),
+    ("etape", "②  Cliquez « ✏️ Saisie manuelle... » : le formulaire s'ouvre "
+              "déjà pré-rempli avec ce que l'analyse a pu extraire."),
+    ("etape", "③  Complétez ou corrigez les montants en lisant le PDF, puis "
+              "« Valider et classer » : la facture rejoint les autres."),
+    ("puce", "•  « 🔄 Réanalyser » retente la lecture automatique (utile "
+             "après installation de Tesseract, par exemple)."),
+
+    ("titre", "5. L'onglet « Synthèse TVA »"),
+    ("normal", "Les totaux par mois (HT, TVA 20 %, 10 %, 5,5 %, TTC), "
+               "calculés d'après la date de facture : votre base pour la "
+               "déclaration de TVA. La ligne TOTAL cumule tout le tableau. "
+               "Pour le détail complet, « 📊 Ouvrir le tableau Excel »."),
+
+    ("titre", "6. La liste des clients"),
+    ("normal", "L'application reconnaît le client d'une facture en cherchant "
+               "son nom dans le texte du PDF. La liste se trouve dans le "
+               "fichier clients.txt (un client par ligne). Si un client "
+               "apparaît sous plusieurs formes, listez-les après un « = » :"),
+    ("code", "ICG 40 = ICG40, I.C.G. 40, SARL ICG 40"),
+    ("normal", "Toutes les variantes seront classées dans le même dossier. "
+               "Une facture dont le client n'est pas reconnu va dans le "
+               "dossier _A_CLASSER."),
+
+    ("titre", "7. Les factures scannées (OCR)"),
+    ("normal", "Les factures photographiées ou scannées n'ont pas de texte "
+               "lisible : l'application utilise alors Tesseract OCR, à "
+               "installer une fois sur l'ordinateur :"),
+    ("puce", "•  Téléchargez l'installateur : "
+             "github.com/UB-Mannheim/tesseract/wiki"),
+    ("puce", "•  Pendant l'installation, cochez le pack de langue « French »."),
+    ("puce", "•  C'est tout : l'application le détecte automatiquement."),
+
+    ("titre", "8. Problèmes fréquents"),
+    ("puce", "•  « Relève impossible » → vérifiez le mot de passe "
+             "d'application dans ⚙️ Réglages (bouton Tester la connexion) et "
+             "votre connexion internet."),
+    ("puce", "•  « Impossible de lire le tableau Excel » → fermez le fichier "
+             "dans Excel pendant que l'application travaille."),
+    ("puce", "•  Une facture scannée échoue toujours → scan de qualité "
+             "insuffisante : utilisez la saisie manuelle (2 minutes)."),
+    ("puce", "•  Le journal (onglet 📜) et le fichier "
+             "traitement_factures.log gardent la trace de tout."),
+    ("normal", ""),
 ]
 
 
@@ -139,6 +249,7 @@ class DialogueReglages(tk.Toplevel):
         super().__init__(parent)
         self.parent = parent
         self.title("Réglages")
+        self.configure(bg=COULEURS["fond"])
         self.resizable(False, False)
         self.transient(parent)
         self.grab_set()
@@ -217,7 +328,7 @@ class DialogueReglages(tk.Toplevel):
         boite = self.saisies["IMAP_FOLDER"].get().strip() or "INBOX"
         if not (hote and utilisateur and mot_de_passe):
             self.label_test.config(text="Renseignez serveur, email et mot de passe.",
-                                   foreground="#b3261e")
+                                   foreground=COULEURS["erreur"])
             return
 
         self.bouton_test.config(state="disabled")
@@ -248,7 +359,8 @@ class DialogueReglages(tk.Toplevel):
             return
         self.bouton_test.config(state="normal")
         self.label_test.config(text=message,
-                               foreground="#0b6e33" if reussi else "#b3261e")
+                               foreground=COULEURS["ok"] if reussi
+                               else COULEURS["erreur"])
 
     # -- Enregistrement -------------------------------------------------------
 
@@ -281,6 +393,7 @@ class DialogueSaisie(tk.Toplevel):
         self.parent = parent
         self.chemin_pdf = chemin_pdf
         self.title(f"Saisie manuelle — {chemin_pdf.name}")
+        self.configure(bg=COULEURS["fond"])
         self.resizable(False, False)
         self.transient(parent)
         self.grab_set()
@@ -320,7 +433,8 @@ class DialogueSaisie(tk.Toplevel):
             champ.grid(column=1, row=ligne, sticky="ew", padx=(10, 0), pady=3)
             self.champs[cle] = champ
 
-        self.label_erreur = ttk.Label(corps, text="", foreground="#b3261e",
+        self.label_erreur = ttk.Label(corps, text="",
+                                      foreground=COULEURS["erreur"],
                                       wraplength=380)
         self.label_erreur.grid(column=0, row=len(definitions) + 1,
                                columnspan=2, sticky="w", pady=(6, 0))
@@ -412,13 +526,70 @@ class ApplicationFactures(tk.Tk):
     # --- Style ---------------------------------------------------------------
 
     def _configurer_style(self) -> None:
+        c = COULEURS
+        self.configure(bg=c["fond"])
         style = ttk.Style(self)
         if "clam" in style.theme_names():
             style.theme_use("clam")
-        style.configure("Action.TButton", font=("", 11, "bold"), padding=(16, 9))
-        style.configure("Info.TLabel", foreground="#555555")
-        style.configure("Treeview", rowheight=24)
-        style.configure("Treeview.Heading", font=("", 9, "bold"))
+
+        # Base : tout repose sur le fond neutre.
+        style.configure(".", background=c["fond"], foreground=c["texte"],
+                        bordercolor=c["bordure"], focuscolor=c["accent_clair"])
+        style.configure("TFrame", background=c["fond"])
+        style.configure("TLabel", background=c["fond"], foreground=c["texte"])
+        style.configure("Info.TLabel", foreground=c["texte_doux"])
+        style.configure("TCheckbutton", background=c["fond"])
+        style.map("TCheckbutton", background=[("active", c["fond"])])
+        style.configure("TSeparator", background=c["bordure"])
+
+        # Boutons : sobres par défaut, accent plein pour l'action principale.
+        style.configure("TButton", background=c["surface"], padding=(10, 6),
+                        relief="flat", bordercolor=c["bordure"])
+        style.map("TButton",
+                  background=[("pressed", c["accent_clair"]),
+                              ("active", c["accent_clair"])])
+        style.configure("Action.TButton", font=("", 11, "bold"),
+                        padding=(18, 10), background=c["accent"],
+                        foreground="#ffffff", bordercolor=c["accent"])
+        style.map("Action.TButton",
+                  background=[("disabled", "#a8b6d4"),
+                              ("pressed", c["accent_fonce"]),
+                              ("active", c["accent_fonce"])],
+                  foreground=[("disabled", "#f0f2f7")])
+
+        # Champs de saisie.
+        style.configure("TEntry", fieldbackground=c["surface"],
+                        bordercolor=c["bordure"], padding=4)
+        style.configure("TCombobox", fieldbackground=c["surface"],
+                        background=c["surface"], padding=4)
+
+        # Tableaux.
+        style.configure("Treeview", rowheight=26, background=c["surface"],
+                        fieldbackground=c["surface"], foreground=c["texte"],
+                        bordercolor=c["bordure"], relief="flat")
+        style.configure("Treeview.Heading", font=("", 9, "bold"),
+                        background=c["entete"], foreground=c["texte"],
+                        relief="flat", padding=(6, 6))
+        style.map("Treeview.Heading", background=[("active", c["entete"])])
+        style.map("Treeview",
+                  background=[("selected", c["accent_clair"])],
+                  foreground=[("selected", c["texte"])])
+
+        # Onglets : plats, l'onglet actif ressort en blanc.
+        style.configure("TNotebook", background=c["fond"], borderwidth=0,
+                        tabmargins=(8, 6, 8, 0))
+        style.configure("TNotebook.Tab", padding=(16, 8),
+                        background=c["fond"], foreground=c["texte_doux"],
+                        borderwidth=0, font=("", 10))
+        style.map("TNotebook.Tab",
+                  background=[("selected", c["surface"])],
+                  foreground=[("selected", c["texte"])],
+                  expand=[("selected", (0, 0, 0, 1))])
+
+        # Barres de défilement discrètes.
+        style.configure("Vertical.TScrollbar", background=c["fond"],
+                        troughcolor=c["fond"], bordercolor=c["fond"],
+                        arrowcolor=c["texte_doux"])
 
     # --- Barre du haut ---------------------------------------------------------
 
@@ -442,7 +613,11 @@ class ApplicationFactures(tk.Tk):
         ttk.Checkbutton(cadre_auto, text="Relève automatique toutes les",
                         variable=self.auto_active).pack(side="left")
         self.auto_minutes = tk.Spinbox(cadre_auto, from_=5, to=240, width=4,
-                                       justify="right")
+                                       justify="right", relief="flat",
+                                       bg=COULEURS["surface"],
+                                       highlightthickness=1,
+                                       highlightbackground=COULEURS["bordure"],
+                                       buttonbackground=COULEURS["surface"])
         self.auto_minutes.delete(0, "end")
         self.auto_minutes.insert(0, "15")
         self.auto_minutes.pack(side="left", padx=4)
@@ -450,7 +625,7 @@ class ApplicationFactures(tk.Tk):
 
         ttk.Button(bandeau, text="⚙️ Réglages",
                    command=self.ouvrir_reglages).pack(side="right")
-        ttk.Button(bandeau, text="📊 Ouvrir le tableau Excel",
+        ttk.Button(bandeau, text="📊 Tableau Excel",
                    command=lambda: _ouvrir(config_locale()["fichier_excel"])
                    ).pack(side="right", padx=6)
 
@@ -463,6 +638,7 @@ class ApplicationFactures(tk.Tk):
         self._onglet_a_verifier()
         self._onglet_synthese()
         self._onglet_journal()
+        self._onglet_tutoriel()
 
     def _onglet_historique(self) -> None:
         cadre = ttk.Frame(self.onglets, padding=8)
@@ -492,7 +668,7 @@ class ApplicationFactures(tk.Tk):
             self.tableau.heading(colonne, text=entete)
             alignement = "e" if colonne in ("ht", "tva20", "tva10", "tva55", "ttc") else "w"
             self.tableau.column(colonne, width=largeur, anchor=alignement)
-        self.tableau.tag_configure("paire", background="#f4f4f4")
+        self.tableau.tag_configure("paire", background=COULEURS["raye"])
         self.tableau.bind("<Double-1>", self._ouvrir_facture_selectionnee)
 
         barre_v = ttk.Scrollbar(cadre, orient="vertical",
@@ -561,7 +737,7 @@ class ApplicationFactures(tk.Tk):
             self.tableau_synthese.column(
                 colonne, width=110, anchor="e" if colonne != "mois" else "w")
         self.tableau_synthese.tag_configure("total", font=("", 9, "bold"),
-                                            background="#e8eef7")
+                                            background=COULEURS["accent_clair"])
         barre_v = ttk.Scrollbar(cadre, orient="vertical",
                                 command=self.tableau_synthese.yview)
         self.tableau_synthese.configure(yscrollcommand=barre_v.set)
@@ -572,14 +748,47 @@ class ApplicationFactures(tk.Tk):
         cadre = ttk.Frame(self.onglets, padding=8)
         self.onglets.add(cadre, text="  📜 Journal  ")
         self.zone_journal = tk.Text(cadre, state="disabled", wrap="none",
-                                    font=("Consolas", 9))
-        self.zone_journal.tag_configure("erreur", foreground="#b3261e")
-        self.zone_journal.tag_configure("alerte", foreground="#8a6d00")
+                                    font=("Consolas", 9), height=8,
+                                    bg=COULEURS["surface"], fg=COULEURS["texte"],
+                                    relief="flat", highlightthickness=1,
+                                    highlightbackground=COULEURS["bordure"],
+                                    padx=8, pady=6)
+        self.zone_journal.tag_configure("erreur", foreground=COULEURS["erreur"])
+        self.zone_journal.tag_configure("alerte", foreground=COULEURS["alerte"])
         barre_v = ttk.Scrollbar(cadre, orient="vertical",
                                 command=self.zone_journal.yview)
         self.zone_journal.configure(yscrollcommand=barre_v.set)
         self.zone_journal.pack(side="left", fill="both", expand=True)
         barre_v.pack(side="right", fill="y")
+
+    def _onglet_tutoriel(self) -> None:
+        cadre = ttk.Frame(self.onglets, padding=0)
+        self.onglets.add(cadre, text="  ❓ Tutoriel  ")
+
+        texte = tk.Text(cadre, wrap="word", relief="flat", height=8,
+                        bg=COULEURS["surface"], fg=COULEURS["texte"],
+                        padx=28, pady=20, spacing1=4, spacing3=6,
+                        highlightthickness=0, cursor="arrow")
+        barre_v = ttk.Scrollbar(cadre, orient="vertical", command=texte.yview)
+        texte.configure(yscrollcommand=barre_v.set)
+        texte.pack(side="left", fill="both", expand=True)
+        barre_v.pack(side="right", fill="y")
+
+        texte.tag_configure("titre", font=("", 14, "bold"),
+                            foreground=COULEURS["accent"],
+                            spacing1=18, spacing3=8)
+        texte.tag_configure("soustitre", font=("", 11, "bold"), spacing1=10)
+        texte.tag_configure("normal", font=("", 10))
+        texte.tag_configure("doux", font=("", 10),
+                            foreground=COULEURS["texte_doux"])
+        texte.tag_configure("puce", font=("", 10), lmargin1=18, lmargin2=32)
+        texte.tag_configure("etape", font=("", 10), lmargin1=18, lmargin2=36)
+        texte.tag_configure("code", font=("Consolas", 9),
+                            background=COULEURS["entete"], lmargin1=18)
+
+        for etiquette, contenu in TUTORIEL:
+            texte.insert("end", contenu + "\n", etiquette)
+        texte.configure(state="disabled")
 
     # --- Barre d'état ------------------------------------------------------------
 
