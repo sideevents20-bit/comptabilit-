@@ -77,6 +77,41 @@ Puis ouvrez `.env` et renseignez au minimum :
 Les autres variables (`DOSSIER_BASE`, `DOSSIER_TEMP`, `FICHIER_EXCEL`,
 `MOTS_CLES_OBJET`, ...) sont optionnelles et documentées dans `.env.example`.
 
+### 4 bis. (Recommandé) Adresse email dédiée aux factures
+
+Recevoir les factures sur une adresse dédiée fiabilise le tri : plus de faux
+positifs, et vos fournisseurs ont une adresse unique à retenir. Trois options,
+de la plus simple à la plus professionnelle :
+
+**Option A — Alias Gmail « +factures » (gratuit, immédiat)**
+Gmail livre tout email envoyé à `votreadresse+factures@gmail.com` dans votre
+boîte habituelle. Rien à créer côté compte :
+
+1. Communiquez `votreadresse+factures@gmail.com` à vos fournisseurs.
+2. Dans Gmail → ⚙️ → *Voir tous les paramètres* → *Filtres et adresses
+   bloquées* → *Créer un filtre* : champ **À** = `votreadresse+factures@gmail.com`
+   → *Appliquer le libellé* **Factures** (et éventuellement *Ne pas afficher
+   dans la boîte de réception* pour ne pas polluer votre boîte principale).
+3. Dans `.env` :
+   ```
+   FILTRE_DESTINATAIRE=votreadresse+factures@gmail.com
+   IMAP_FOLDER=Factures        # si vous avez créé le filtre + libellé
+   ```
+
+**Option B — Compte Gmail séparé** (ex : `factures.moncentre@gmail.com`) :
+créez le compte sur gmail.com, activez la validation en deux étapes, générez
+un mot de passe d'application, et mettez ces identifiants dans le `.env`.
+`IMAP_FOLDER=INBOX` suffit alors, tout ce qui arrive est une facture.
+
+**Option C — Adresse sur votre propre domaine** (ex :
+`factures@moncentre.fr`) : à créer chez votre hébergeur (OVH, Gandi,
+Google Workspace...). C'est l'option la plus professionnelle ; renseignez
+ensuite `IMAP_HOST` / `IMAP_USER` / `IMAP_PASSWORD` du fournisseur dans `.env`.
+
+> `FILTRE_DESTINATAIRE` restreint la relève aux emails **adressés à** cette
+> adresse (en-tête `To`). Combiné au libellé Gmail (`IMAP_FOLDER=Factures`),
+> le tri est doublement sécurisé.
+
 ### 5. Déclarer vos clients
 
 Éditez `clients.txt` : **un nom de client par ligne** (tel qu'il apparaît sur

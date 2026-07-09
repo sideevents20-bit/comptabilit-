@@ -119,6 +119,9 @@ def charger_configuration() -> dict:
             for m in os.getenv("MOTS_CLES_OBJET", "facture,invoice").split(",")
             if m.strip()
         ],
+        # Adresse dédiée aux factures (ex : alias Gmail "+factures").
+        # Si renseignée, seuls les emails envoyés À cette adresse sont relevés.
+        "filtre_destinataire": os.getenv("FILTRE_DESTINATAIRE", "").strip(),
     }
     return config
 
@@ -229,10 +232,22 @@ def relever_emails_factures(connexion: imaplib.IMAP4_SSL, config: dict) -> list[
     Retourne une liste de dictionnaires :
         {"id": ..., "objet": ..., "expediteur": ..., "pdfs": [Path, ...]}
 
+    Si FILTRE_DESTINATAIRE est renseigné dans le .env (adresse email
+    dédiée aux factures), la recherche est restreinte aux emails envoyés
+    à cette adresse (en-tête To), et le filtre mot-clé/PDF est conservé
+    comme garde-fou.
+
     NB : la lecture se fait avec BODY.PEEK pour ne PAS marquer l'email
     comme lu ; il n'est marqué lu qu'après traitement réussi.
     """
-    statut, donnees = connexion.search(None, "UNSEEN")
+    criteres = ["UNSEEN"]
+    if config["filtre_destinataire"]:
+        criteres += ["TO", f'"{config["filtre_destinataire"]}"']
+        logger.info(
+            "Filtre actif : uniquement les emails adressés à %s.",
+            config["filtre_destinataire"],
+        )
+    statut, donnees = connexion.search(None, *criteres)
     if statut != "OK":
         raise RuntimeError("La recherche IMAP des emails non lus a échoué.")
 
