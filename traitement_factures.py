@@ -98,18 +98,21 @@ def configurer_logging() -> None:
     )
 
 
-def charger_configuration() -> dict:
+def charger_configuration(exiger_imap: bool = True) -> dict:
     """
     Charge la configuration depuis le fichier .env.
 
-    Lève une erreur explicite si un identifiant obligatoire est absent,
-    afin de ne jamais tenter une connexion avec des valeurs vides.
+    Avec exiger_imap=True (défaut), lève une erreur explicite si un
+    identifiant IMAP obligatoire est absent, afin de ne jamais tenter une
+    connexion avec des valeurs vides. exiger_imap=False permet d'obtenir
+    les chemins de travail seuls (utilisé par l'application de bureau
+    pour les opérations locales : import manuel, consultation...).
     """
-    load_dotenv()
+    load_dotenv(override=True)
 
     obligatoires = ["IMAP_HOST", "IMAP_USER", "IMAP_PASSWORD"]
     manquants = [cle for cle in obligatoires if not os.getenv(cle)]
-    if manquants:
+    if manquants and exiger_imap:
         raise RuntimeError(
             f"Variables manquantes dans le fichier .env : {', '.join(manquants)}. "
             "Copiez .env.example vers .env et renseignez vos identifiants."

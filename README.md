@@ -149,12 +149,21 @@ Sous Windows, double-cliquez simplement sur **`Lancer_Factures.bat`**
 (vous pouvez en créer un raccourci sur le Bureau).
 
 L'application permet de :
-- lancer la relève d'un clic (« 📥 Relever les factures ») sans figer la fenêtre ;
-- consulter l'historique des factures traitées (contenu du tableau Excel) ;
-- voir en un coup d'œil les factures **à vérifier manuellement** (échecs) ;
-- ouvrir directement le tableau TVA, le dossier des factures classées,
-  le dossier « à vérifier » et la liste des clients ;
-- suivre le journal en direct (les erreurs apparaissent en rouge).
+- lancer la relève d'un clic (« 📥 Relever les factures »), ou l'activer en
+  **automatique** à intervalle régulier (case « Relève automatique ») ;
+- **traiter des PDF locaux** sans passer par l'email (« 📄 Traiter des PDF... ») ;
+- consulter l'**historique** avec recherche (client, fournisseur, fichier) et
+  ouvrir n'importe quelle facture d'un double-clic ;
+- gérer les factures **à vérifier** (échecs d'analyse) : ouvrir le PDF,
+  réanalyser, ou **saisie manuelle assistée** — le formulaire est pré-rempli
+  avec ce que l'analyse a pu extraire, vous complétez et la facture est
+  classée normalement ;
+- consulter la **synthèse TVA par mois** (HT, TVA par taux, TTC) ;
+- suivre le **journal** en direct (erreurs en rouge) ;
+- configurer la connexion depuis l'écran **⚙️ Réglages** (écrit le fichier
+  `.env` pour vous, avec bouton « Tester la connexion »). Au premier
+  lancement, cet écran s'ouvre automatiquement : aucune édition de fichier
+  n'est nécessaire.
 
 **Mode terminal** (pour l'automatisation planifiée) :
 
