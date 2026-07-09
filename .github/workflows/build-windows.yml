@@ -1,0 +1,87 @@
+name: Construire l'application Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - claude/invoice-automation-script-7cjmhf
+      - main
+    tags:
+      - "v*"
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Installer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installer les dépendances
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Tests du moteur
+        run: python tests/test_extraction.py
+
+      - name: Construire l'exécutable
+        run: >
+          pyinstaller --noconfirm --onefile --windowed
+          --name TraitementFactures
+          --collect-all pypdfium2
+          application.py
+
+      - name: Assembler le dossier d'installation
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path "TraitementFactures" | Out-Null
+          Copy-Item "dist/TraitementFactures.exe" "TraitementFactures/"
+          Copy-Item ".env.example" "TraitementFactures/"
+          Copy-Item "clients.txt" "TraitementFactures/"
+          Copy-Item "README.md" "TraitementFactures/"
+          Set-Content -Path "TraitementFactures/LISEZMOI-INSTALLATION.txt" -Encoding UTF8 -Value @"
+          TRAITEMENT DES FACTURES — INSTALLATION
+          ======================================
+
+          1. Copiez ce dossier ou vous voulez (ex : C:\TraitementFactures).
+          2. Double-cliquez sur TraitementFactures.exe
+             (le premier demarrage prend quelques secondes).
+          3. Au premier lancement, l'ecran de reglages s'ouvre :
+             saisissez le mot de passe d'application Google de la boite
+             mtgsud.compta@gmail.com puis « Tester la connexion ».
+          4. Pour lire les factures SCANNEES (recommande), installez
+             Tesseract OCR avec le pack French :
+             https://github.com/UB-Mannheim/tesseract/wiki
+
+          Les factures classees, le tableau Excel et la liste des clients
+          sont crees a cote de l'executable.
+          "@
+
+      - name: Publier l'artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TraitementFactures-Windows
+          path: TraitementFactures/
+
+      - name: Publier la release (si tag v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: Compress-Archive -Path "TraitementFactures" -DestinationPath "TraitementFactures-Windows.zip"
+
+      - name: Attacher le zip à la release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: TraitementFactures-Windows.zip
+          name: "Traitement des factures ${{ github.ref_name }}"
+          body: |
+            Application Windows autonome (aucune installation de Python nécessaire).
+
+            **Installation** : téléchargez `TraitementFactures-Windows.zip`,
+            décompressez-le où vous voulez, double-cliquez sur
+            `TraitementFactures.exe`. Voir `LISEZMOI-INSTALLATION.txt`.

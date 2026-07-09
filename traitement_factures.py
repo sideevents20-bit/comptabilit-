@@ -49,6 +49,18 @@ try:
     import pytesseract
 
     OCR_DISPONIBLE = True
+
+    # Sous Windows, Tesseract n'est pas toujours dans le PATH : on cherche
+    # aux emplacements d'installation habituels.
+    if sys.platform == "win32" and not shutil.which("tesseract"):
+        for _chemin in (
+            r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+            r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+            os.path.expandvars(r"%LOCALAPPDATA%\Programs\Tesseract-OCR\tesseract.exe"),
+        ):
+            if os.path.exists(_chemin):
+                pytesseract.pytesseract.tesseract_cmd = _chemin
+                break
 except ImportError:
     OCR_DISPONIBLE = False
 

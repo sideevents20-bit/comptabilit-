@@ -33,6 +33,29 @@ Règles de sécurité intégrées :
 - tous les événements sont tracés dans le terminal **et** dans le fichier
   `traitement_factures.log`.
 
+## Installation clé en main (Windows)
+
+Deux options, de la plus simple à la plus flexible :
+
+**Option A — Exécutable autonome (aucun prérequis)**
+À chaque mise à jour du code, GitHub construit automatiquement un `.exe`
+Windows (onglet **Actions** du dépôt → dernier run « Construire l'application
+Windows » → artefact `TraitementFactures-Windows` ; ou section **Releases**
+pour les versions stables). Décompressez le dossier où vous voulez et
+double-cliquez sur `TraitementFactures.exe` — c'est tout. Installez seulement
+[Tesseract OCR](https://github.com/UB-Mannheim/tesseract/wiki) (pack French)
+pour la lecture des factures scannées.
+
+**Option B — Avec Python : installateur un-clic**
+Si Python 3.10+ est installé (en ayant coché « Add python.exe to PATH ») :
+double-cliquez sur **`Installer.bat`**. Il crée l'environnement, installe les
+dépendances, ajoute un raccourci « Traitement des factures » sur le Bureau et
+vérifie Tesseract. Ensuite, lancez depuis le raccourci.
+
+Dans les deux cas, **au premier lancement l'écran de réglages s'ouvre
+automatiquement** : saisissez le mot de passe d'application Google, cliquez
+« Tester la connexion » puis « Enregistrer ». L'application est opérationnelle.
+
 ## Installation pas à pas
 
 ### 1. Prérequis

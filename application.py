@@ -42,7 +42,12 @@ from dotenv import dotenv_values
 
 # L'application doit travailler dans son propre dossier (fichiers .env,
 # clients.txt, tableau Excel...), quel que soit l'endroit d'où on la lance.
-DOSSIER_PROJET = Path(__file__).resolve().parent
+# En version packagée (PyInstaller), __file__ pointe vers un dossier
+# temporaire : on prend alors le dossier de l'exécutable.
+if getattr(sys, "frozen", False):
+    DOSSIER_PROJET = Path(sys.executable).resolve().parent
+else:
+    DOSSIER_PROJET = Path(__file__).resolve().parent
 os.chdir(DOSSIER_PROJET)
 
 import traitement_factures as moteur  # noqa: E402
