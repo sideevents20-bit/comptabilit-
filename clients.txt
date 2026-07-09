@@ -1,0 +1,7 @@
+# Liste des clients du centre d'affaires — un nom par ligne.
+# Le script cherche ces noms dans le texte des factures pour les classer.
+# Les lignes commençant par # sont ignorées.
+# Exemples (à remplacer par vos vrais clients) :
+SARL Dupont Consulting
+SAS Martin & Fils
+EURL Belle Etoile
