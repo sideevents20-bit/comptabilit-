@@ -77,6 +77,23 @@ Puis ouvrez `.env` et renseignez au minimum :
 Les autres variables (`DOSSIER_BASE`, `DOSSIER_TEMP`, `FICHIER_EXCEL`,
 `MOTS_CLES_OBJET`, ...) sont optionnelles et documentées dans `.env.example`.
 
+### 3 bis. Installer Tesseract (OCR des factures scannées)
+
+En pratique, la majorité des factures fournisseurs sont des **scans** (photos
+ou numérisations sans texte). Le script les lit grâce à l'OCR Tesseract, qui
+doit être installé sur la machine :
+
+- **Windows** : téléchargez l'installateur sur
+  https://github.com/UB-Mannheim/tesseract/wiki — pendant l'installation,
+  cochez le pack de langue **French**. Si `tesseract` n'est pas dans le PATH,
+  ajoutez dans le `.env` ou en début de script :
+  `pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"`
+- **macOS** : `brew install tesseract tesseract-lang`
+- **Linux (Debian/Ubuntu)** : `sudo apt install tesseract-ocr tesseract-ocr-fra`
+
+Sans Tesseract, le script fonctionne quand même : les PDF scannés sont
+simplement signalés en échec et conservés dans `_temp_factures/`.
+
 ### 4 bis. (Recommandé) Adresse email dédiée aux factures
 
 Recevoir les factures sur une adresse dédiée fiabilise le tri : plus de faux
@@ -146,14 +163,29 @@ Exemple de sortie :
 - **Windows** — Planificateur de tâches, action :
   `C:\chemin\.venv\Scripts\python.exe C:\chemin\traitement_factures.py`
 
+## Tests
+
+Le dossier `tests/` contient une suite de non-régression calquée sur des
+factures réelles (acomptes négatifs, sous-totaux, colonnes OCR sans libellés,
+numéros de TVA intracommunautaire, tickets de caisse...) :
+
+```bash
+python tests/test_extraction.py     # ou : python -m pytest tests/
+```
+
 ## Limites connues
 
-- Les **PDF scannés** (images sans couche texte) ne sont pas lus : ils sont
-  signalés en échec et conservés dans `_temp_factures/`. Un OCR
-  (ex. `ocrmypdf` + Tesseract) peut être ajouté si besoin.
+- **PDF scannés** : lus par OCR (Tesseract). Un scan de très mauvaise qualité
+  (décimales illisibles, texte trop dégradé) est signalé en échec et conservé
+  dans `_temp_factures/` pour saisie manuelle — le script ne devine jamais un
+  montant douteux.
+- **Paiements partiels** : le script extrait le **Total TTC de la facture**
+  (la donnée comptable), pas le montant du virement. Une facture payée en
+  plusieurs fois apparaît donc avec son total, ce qui est le comportement
+  attendu pour le tableau de TVA.
 - L'extraction par expressions régulières couvre les mises en page de factures
-  françaises courantes (« Total HT », « TVA 20 % », « Net à payer »...) ; une
-  facture au format très atypique peut nécessiter d'ajuster les motifs dans
-  `extraire_montants()` / `extraire_date_facture()`.
+  françaises courantes (« Total HT », « TVA 20 % », « Net à payer », « Somme à
+  payer »...) ; une facture au format très atypique peut nécessiter d'ajuster
+  les motifs dans `extraire_montants()` / `extraire_date_facture()`.
 - Le fichier Excel ne doit pas être **ouvert dans Excel** pendant l'exécution
   du script (verrouillage du fichier).

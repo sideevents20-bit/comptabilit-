@@ -3,3 +3,9 @@ pdfplumber>=0.11.0        # Extraction du texte des PDF
 pandas>=2.0.0             # Génération du tableau de TVA
 openpyxl>=3.1.0           # Moteur Excel (.xlsx) utilisé par pandas
 python-dotenv>=1.0.0      # Chargement des identifiants depuis le fichier .env
+
+# --- OCR des factures scannées (fortement recommandé) ---
+# Nécessite AUSSI le logiciel Tesseract avec le pack français (voir README).
+pytesseract>=0.3.10       # Interface Python de Tesseract
+pypdfium2>=4.0.0          # Conversion des pages PDF en images
+Pillow>=10.0.0            # Manipulation des images

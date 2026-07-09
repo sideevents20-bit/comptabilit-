@@ -41,6 +41,17 @@ import pandas as pd
 import pdfplumber
 from dotenv import load_dotenv
 
+# --- OCR optionnel (pour les factures scannées) ----------------------------
+# Nécessite : pip install pytesseract pypdfium2 Pillow
+# + le logiciel Tesseract avec le pack français (voir README).
+try:
+    import pypdfium2 as pdfium
+    import pytesseract
+
+    OCR_DISPONIBLE = True
+except ImportError:
+    OCR_DISPONIBLE = False
+
 # ---------------------------------------------------------------------------
 # 0. CONFIGURATION & LOGGING
 # ---------------------------------------------------------------------------
@@ -296,11 +307,44 @@ def marquer_comme_lu(connexion: imaplib.IMAP4_SSL, msg_id: bytes) -> None:
 # ---------------------------------------------------------------------------
 
 def extraire_texte_pdf(chemin_pdf: Path) -> str:
-    """Extrait le texte brut de toutes les pages du PDF avec pdfplumber."""
+    """
+    Extrait le texte du PDF avec pdfplumber ; si le PDF est un scan
+    (pas de couche texte), bascule automatiquement sur l'OCR Tesseract.
+    """
     texte = []
     with pdfplumber.open(chemin_pdf) as pdf:
         for page in pdf.pages:
             texte.append(page.extract_text() or "")
+    resultat = "\n".join(texte)
+
+    # Moins de 30 caractères utiles = très probablement un scan.
+    if len(resultat.strip()) >= 30:
+        return resultat
+
+    if not OCR_DISPONIBLE:
+        logger.warning(
+            "%s : PDF scanné et OCR indisponible. Installez pytesseract, "
+            "pypdfium2 et Tesseract (voir README).", chemin_pdf.name
+        )
+        return resultat
+
+    logger.info("%s : PDF scanné détecté, lecture par OCR...", chemin_pdf.name)
+    return ocr_pdf(chemin_pdf)
+
+
+def ocr_pdf(chemin_pdf: Path, dpi: int = 300) -> str:
+    """
+    OCR d'un PDF scanné : chaque page est convertie en image (pypdfium2)
+    puis lue par Tesseract en français.
+    """
+    texte = []
+    document = pdfium.PdfDocument(str(chemin_pdf))
+    try:
+        for page in document:
+            image = page.render(scale=dpi / 72).to_pil()
+            texte.append(pytesseract.image_to_string(image, lang="fra"))
+    finally:
+        document.close()
     return "\n".join(texte)
 
 
@@ -346,6 +390,49 @@ def convertir_montant(brut: str) -> float | None:
 
 # Motif générique d'un montant : chiffres, espaces, points, virgules.
 _MONTANT = r"([\d][\d\s  .,]*)"
+
+
+def _dernier_montant(motif: str, texte: str) -> float | None:
+    """
+    Retourne le montant de la DERNIERE occurrence du motif dans le texte.
+
+    Sur une facture, les totaux fiables sont dans le bloc recapitulatif en
+    bas de page ; les memes libelles peuvent apparaitre plus haut dans le
+    tableau des articles (ex : "Montant HT - 470 180,00" sur une ligne
+    d'acompte, ou un "Sous-total HT" intermediaire) et donneraient un
+    resultat faux si on prenait la premiere occurrence.
+    """
+    montant = None
+    for m in re.finditer(motif, texte, re.IGNORECASE):
+        valeur = convertir_montant(m.group(1))
+        if valeur is not None:
+            montant = valeur
+    return montant
+
+
+def _plus_grand_montant_isole(texte: str) -> float | None:
+    """
+    Dernier recours pour le Total TTC : montants seuls sur leur ligne.
+
+    Sur beaucoup de factures scannées, l'OCR sépare la colonne des totaux
+    de ses libellés : on obtient des lignes ne contenant qu'un montant
+    ("489,79 EUR" / "97,96 EUR" / "587,75 EUR"). Le TTC étant le plus
+    grand de ces totaux, on retourne le maximum. Seuls les montants
+    formatés avec 2 décimales sont retenus, pour exclure les numéros
+    SIREN/IBAN et autres nombres parasites.
+    """
+    motif = re.compile(
+        r"^\s*(\d{1,3}(?:[\s\u202f\u00a0.]?\d{3})*[.,]\d{2})\s*(?:€|EUROS?|EUR)?\s*$",
+        re.IGNORECASE,
+    )
+    montants = []
+    for ligne in texte.splitlines():
+        m = motif.match(ligne)
+        if m:
+            valeur = convertir_montant(m.group(1))
+            if valeur:
+                montants.append(valeur)
+    return max(montants) if montants else None
 
 
 def extraire_date_facture(texte: str) -> str | None:
@@ -453,35 +540,41 @@ def extraire_montants(texte: str) -> dict:
                 "total_ttc": None}
 
     # --- Total HT -----------------------------------------------------------
-    m = re.search(
-        r"(?:total\s*h\.?t\.?|montant\s*h\.?t\.?|total\s+hors\s+taxes?)"
-        r"[^\d\n]{0,20}" + _MONTANT,
-        texte, re.IGNORECASE,
+    # Priorité au "Total HT" (bloc récapitulatif), en excluant les
+    # "Sous-total HT" intermédiaires et les montants négatifs (acomptes,
+    # remises) ; on prend toujours la DERNIÈRE occurrence, celle du bas
+    # de la facture. "Montant HT" / "Total hors taxes" servent de repli.
+    resultat["total_ht"] = _dernier_montant(
+        r"(?<![a-zà-ü-])total\s*h\.?t\.?[^\d\n-]{0,20}" + _MONTANT, texte
     )
-    if m:
-        resultat["total_ht"] = convertir_montant(m.group(1))
+    if resultat["total_ht"] is None:
+        resultat["total_ht"] = _dernier_montant(
+            r"(?:montant\s*h\.?t\.?|total\s+hors\s+taxes?)[^\d\n-]{0,20}" + _MONTANT,
+            texte,
+        )
 
     # --- TVA par taux -------------------------------------------------------
     # Exemples couverts : "TVA 20% : 100,00", "TVA (5,5 %) 12.30",
     #                     "Montant TVA 10,00 % 45,00 €"
+    # Dernière occurrence par taux : c'est celle du récapitulatif de TVA.
     for m in re.finditer(
         r"tva[^\d\n%]{0,15}\(?\s*(20|10|5[.,]5)(?:[.,]0{1,2})?\s*%\s*\)?"
-        r"[^\d\n]{0,20}" + _MONTANT,
+        r"[^\d\n-]{0,20}" + _MONTANT,
         texte, re.IGNORECASE,
     ):
         taux = m.group(1).replace(",", ".")
         montant = convertir_montant(m.group(2))
-        if montant is not None and resultat["tva"][taux] is None:
+        if montant is not None:
             resultat["tva"][taux] = montant
 
     # Cas d'une TVA sans taux affiché sur la même ligne : "Total TVA : 98,40".
+    # Seuls espaces / ':' / '.' sont tolérés entre "TVA" et le montant, pour
+    # ne jamais capturer un numéro de TVA intracommunautaire ("TVA : FR13...").
     if all(v is None for v in resultat["tva"].values()):
-        m = re.search(
-            r"(?:total\s+)?(?:montant\s+)?tva[^\d\n%]{0,20}" + _MONTANT,
-            texte, re.IGNORECASE,
+        montant_tva = _dernier_montant(
+            r"(?:total\s+|montant\s+)?tva[\s:.]{1,10}" + _MONTANT, texte
         )
-        if m:
-            montant_tva = convertir_montant(m.group(1))
+        if montant_tva is not None:
             # Sans taux explicite, on le déduit du ratio TVA / HT si possible,
             # sinon on suppose le taux normal de 20 %.
             taux_deduit = "20"
@@ -494,13 +587,30 @@ def extraire_montants(texte: str) -> dict:
             resultat["tva"][taux_deduit] = montant_tva
 
     # --- Total TTC ----------------------------------------------------------
-    m = re.search(
-        r"(?:total\s*t\.?t\.?c\.?|montant\s*t\.?t\.?c\.?|net\s+à\s+payer"
-        r"|total\s+à\s+payer|montant\s+dû)[^\d\n]{0,20}" + _MONTANT,
-        texte, re.IGNORECASE,
+    # Cascade de replis, du libellé le plus fiable au moins fiable :
+    #   1. "Total TTC" / "Montant TTC" (dernière occurrence)
+    #   2. "Net à payer" / "Montant dû" / "Somme à payer"
+    #   3. "TTC" seul (ex : ticket "Client: 03092 TTC : 1 967,18")
+    #   4. Montants seuls sur leur ligne (colonne de totaux sans libellés,
+    #      fréquent sur les PDF passés à l'OCR) : on prend le plus grand.
+    resultat["total_ttc"] = _dernier_montant(
+        r"(?:total\s*t\.?t\.?c\.?|montant\s*t\.?t\.?c\.?)[^\d\n-]{0,20}" + _MONTANT,
+        texte,
     )
-    if m:
-        resultat["total_ttc"] = convertir_montant(m.group(1))
+    if resultat["total_ttc"] is None:
+        resultat["total_ttc"] = _dernier_montant(
+            r"(?:net\s+[àa]\s+payer|total\s+[àa]\s+payer|montant\s+d[ûu]"
+            r"|somme\s+[àa]\s+payer|carte\s*-?\s*bancaire)[^\d\n-]{0,20}" + _MONTANT,
+            texte,
+        )
+    if resultat["total_ttc"] is None:
+        # [ \t] et non \s : le montant doit être sur la MÊME ligne que "TTC"
+        # (l'OCR sépare souvent libellés et montants en colonnes distinctes).
+        resultat["total_ttc"] = _dernier_montant(
+            r"\bt\.?t\.?c\.?\b[ \t:.]{1,10}" + _MONTANT, texte
+        )
+    if resultat["total_ttc"] is None:
+        resultat["total_ttc"] = _plus_grand_montant_isole(texte)
 
     # --- Contrôle de cohérence HT + TVA = TTC (simple avertissement) --------
     ht, ttc = resultat["total_ht"], resultat["total_ttc"]
