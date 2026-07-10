@@ -75,17 +75,59 @@ TESSERACT_CMD = _trouver_tesseract()
 OCR_DISPONIBLE = PDFIUM_DISPONIBLE and TESSERACT_CMD is not None
 
 
-def diagnostic_ocr() -> tuple[bool, str]:
-    """État de la chaîne OCR, en clair (affiché par l'application)."""
+def _executer_tesseract(arguments: list[str],
+                        timeout: int = 180) -> subprocess.CompletedProcess:
+    """Lance Tesseract en sous-processus, sans console sous Windows."""
+    options = {}
+    if sys.platform == "win32":
+        options["creationflags"] = subprocess.CREATE_NO_WINDOW
+    return subprocess.run(
+        [TESSERACT_CMD, *arguments],
+        stdin=subprocess.DEVNULL, capture_output=True,
+        timeout=timeout, **options,
+    )
+
+
+def _langues_tesseract() -> set[str]:
+    """Langues installées de Tesseract (via --list-langs)."""
+    try:
+        resultat = _executer_tesseract(["--list-langs"], timeout=30)
+        lignes = (resultat.stdout + resultat.stderr).decode(errors="replace")
+        return {l.strip() for l in lignes.splitlines()
+                if l.strip() and ":" not in l}
+    except Exception:  # noqa: BLE001 - le diagnostic ne doit jamais planter
+        return set()
+
+
+# Langue de lecture : français si le pack est installé, sinon repli sur
+# l'anglais (les montants restent lisibles, les libellés un peu moins).
+LANGUES_TESSERACT: set[str] = _langues_tesseract() if OCR_DISPONIBLE else set()
+LANGUE_OCR = "fra" if "fra" in LANGUES_TESSERACT else "eng"
+
+
+def diagnostic_ocr() -> tuple[str, str]:
+    """
+    État de la chaîne OCR : ("ok" | "partiel" | "absent", message clair).
+    Affiché en permanence par l'application.
+    """
     if not PDFIUM_DISPONIBLE:
-        return False, ("OCR indisponible : bibliothèque pypdfium2 manquante "
-                       "(pip install pypdfium2 Pillow).")
+        return "absent", ("OCR indisponible : bibliothèque pypdfium2 "
+                          "manquante (pip install pypdfium2 Pillow).")
     if TESSERACT_CMD is None:
-        return False, ("Tesseract n'est pas installé : les factures SCANNÉES "
-                       "ne pourront pas être lues. Installation (2 min) : "
-                       "https://github.com/UB-Mannheim/tesseract/wiki "
-                       "(cochez le pack French) — voir l'onglet Tutoriel §7.")
-    return True, f"OCR prêt (Tesseract : {TESSERACT_CMD})."
+        return "absent", ("Tesseract n'est pas installé : les factures "
+                          "SCANNÉES ne pourront pas être lues. Installation "
+                          "(2 min) : https://github.com/UB-Mannheim/tesseract/wiki "
+                          "(cochez le pack French) — voir l'onglet Tutoriel §7.")
+    if "fra" not in LANGUES_TESSERACT:
+        return "partiel", (
+            "Tesseract est installé mais SANS le pack de langue française : "
+            "lecture des scans en anglais, moins fiable. Pour ajouter le "
+            "français : relancez l'installateur de Tesseract et cochez "
+            "« French » dans Additional language data, OU téléchargez "
+            "fra.traineddata sur github.com/tesseract-ocr/tessdata_fast et "
+            "copiez-le dans C:\\Program Files\\Tesseract-OCR\\tessdata."
+        )
+    return "ok", f"OCR prêt (Tesseract : {TESSERACT_CMD}, français installé)."
 
 # ---------------------------------------------------------------------------
 # 0. CONFIGURATION & LOGGING
@@ -395,10 +437,6 @@ def ocr_pdf(chemin_pdf: Path, dpi: int = 300) -> str:
     """
     import tempfile
 
-    options = {}
-    if sys.platform == "win32":
-        options["creationflags"] = subprocess.CREATE_NO_WINDOW
-
     texte = []
     document = pdfium.PdfDocument(str(chemin_pdf))
     try:
@@ -407,12 +445,9 @@ def ocr_pdf(chemin_pdf: Path, dpi: int = 300) -> str:
                 image = page.render(scale=dpi / 72).to_pil()
                 chemin_image = os.path.join(dossier, f"page_{numero}.png")
                 image.save(chemin_image)
-                resultat = subprocess.run(
-                    [TESSERACT_CMD, chemin_image, "stdout",
-                     "-l", "fra", "--dpi", str(dpi)],
-                    stdin=subprocess.DEVNULL, capture_output=True,
-                    timeout=180, **options,
-                )
+                resultat = _executer_tesseract(
+                    [chemin_image, "stdout", "-l", LANGUE_OCR,
+                     "--dpi", str(dpi)])
                 if resultat.returncode != 0:
                     raise ValueError(
                         "Tesseract a échoué : "

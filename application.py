@@ -169,8 +169,20 @@ TUTORIEL = [
                "installer une fois sur l'ordinateur :"),
     ("puce", "•  Téléchargez l'installateur : "
              "github.com/UB-Mannheim/tesseract/wiki"),
-    ("puce", "•  Pendant l'installation, cochez le pack de langue « French »."),
-    ("puce", "•  C'est tout : l'application le détecte automatiquement."),
+    ("puce", "•  Pendant l'installation, à l'étape « Additional language "
+             "data », cochez IMPÉRATIVEMENT « French »."),
+    ("puce", "•  C'est tout : l'application le détecte automatiquement — la "
+             "barre du bas doit afficher « OCR : ✓ Tesseract prêt "
+             "(français) » en vert."),
+    ("normal", "Si la barre du bas affiche « ⚠ pack français manquant » en "
+               "orange : Tesseract est installé mais sans le français. Deux "
+               "solutions :"),
+    ("puce", "•  Relancez l'installateur de Tesseract et cochez « French » ; "
+             "ou"),
+    ("puce", "•  Téléchargez le fichier fra.traineddata sur "
+             "github.com/tesseract-ocr/tessdata_fast et copiez-le dans "
+             "C:\\Program Files\\Tesseract-OCR\\tessdata, puis relancez "
+             "l'application."),
 
     ("titre", "8. Problèmes fréquents"),
     ("puce", "•  « Relève impossible » → vérifiez le mot de passe "
@@ -528,13 +540,18 @@ class ApplicationFactures(tk.Tk):
 
         # État de la chaîne OCR, affiché d'emblée : c'est LE point qui
         # détermine si les factures scannées pourront être lues.
-        ocr_ok, message_ocr = moteur.diagnostic_ocr()
-        self._journal(logging.INFO if ocr_ok else logging.WARNING, message_ocr)
-        self.label_ocr.config(
-            text="OCR : ✓ Tesseract prêt" if ocr_ok
-            else "OCR : ✗ Tesseract non installé (factures scannées "
-                 "illisibles — voir Tutoriel §7)",
-            foreground=COULEURS["ok"] if ocr_ok else COULEURS["erreur"])
+        statut_ocr, message_ocr = moteur.diagnostic_ocr()
+        self._journal(logging.INFO if statut_ocr == "ok" else logging.WARNING,
+                      message_ocr)
+        libelles = {
+            "ok": ("OCR : ✓ Tesseract prêt (français)", COULEURS["ok"]),
+            "partiel": ("OCR : ⚠ pack français manquant — lecture dégradée "
+                        "(voir Tutoriel §7)", COULEURS["alerte"]),
+            "absent": ("OCR : ✗ Tesseract non installé (factures scannées "
+                       "illisibles — voir Tutoriel §7)", COULEURS["erreur"]),
+        }
+        texte_ocr, couleur_ocr = libelles[statut_ocr]
+        self.label_ocr.config(text=texte_ocr, foreground=couleur_ocr)
 
         # Premier lancement : ouvrir directement les réglages.
         if not Path(".env").exists():
