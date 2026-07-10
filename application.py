@@ -46,6 +46,13 @@ from dotenv import dotenv_values
 # temporaire : on prend alors le dossier de l'exécutable.
 if getattr(sys, "frozen", False):
     DOSSIER_PROJET = Path(sys.executable).resolve().parent
+    # En exécutable fenêtré (sans console), les flux standards sont
+    # inexistants : on les remplace pour que bibliothèques et
+    # sous-processus ne plantent jamais dessus.
+    for _nom_flux in ("stdin", "stdout", "stderr"):
+        if getattr(sys, _nom_flux) is None:
+            setattr(sys, _nom_flux,
+                    open(os.devnull, "r" if _nom_flux == "stdin" else "w"))
 else:
     DOSSIER_PROJET = Path(__file__).resolve().parent
 os.chdir(DOSSIER_PROJET)
@@ -519,6 +526,16 @@ class ApplicationFactures(tk.Tk):
         self.after(150, self._vider_file_messages)
         self.after(15_000, self._tic_releve_auto)
 
+        # État de la chaîne OCR, affiché d'emblée : c'est LE point qui
+        # détermine si les factures scannées pourront être lues.
+        ocr_ok, message_ocr = moteur.diagnostic_ocr()
+        self._journal(logging.INFO if ocr_ok else logging.WARNING, message_ocr)
+        self.label_ocr.config(
+            text="OCR : ✓ Tesseract prêt" if ocr_ok
+            else "OCR : ✗ Tesseract non installé (factures scannées "
+                 "illisibles — voir Tutoriel §7)",
+            foreground=COULEURS["ok"] if ocr_ok else COULEURS["erreur"])
+
         # Premier lancement : ouvrir directement les réglages.
         if not Path(".env").exists():
             self.after(300, self.ouvrir_reglages)
@@ -797,6 +814,8 @@ class ApplicationFactures(tk.Tk):
         barre.pack(fill="x")
         self.label_boite = ttk.Label(barre, text="", style="Info.TLabel")
         self.label_boite.pack(side="left")
+        self.label_ocr = ttk.Label(barre, text="", style="Info.TLabel")
+        self.label_ocr.pack(side="left", padx=24)
         self.label_etat = ttk.Label(barre, text="Prêt.", style="Info.TLabel")
         self.label_etat.pack(side="right")
 

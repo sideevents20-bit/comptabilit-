@@ -29,6 +29,7 @@ import logging
 import os
 import re
 import shutil
+import subprocess
 import sys
 import unicodedata
 from datetime import datetime
@@ -42,27 +43,49 @@ import pdfplumber
 from dotenv import load_dotenv
 
 # --- OCR optionnel (pour les factures scannées) ----------------------------
-# Nécessite : pip install pytesseract pypdfium2 Pillow
-# + le logiciel Tesseract avec le pack français (voir README).
+# Nécessite : pip install pypdfium2 Pillow + le logiciel Tesseract avec le
+# pack français (voir README). Tesseract est appelé directement en
+# sous-processus : pas de dépendance pytesseract, et un fonctionnement
+# fiable même packagé en exécutable fenêtré (sans console).
 try:
     import pypdfium2 as pdfium
-    import pytesseract
 
-    OCR_DISPONIBLE = True
+    PDFIUM_DISPONIBLE = True
+except ImportError:
+    PDFIUM_DISPONIBLE = False
 
-    # Sous Windows, Tesseract n'est pas toujours dans le PATH : on cherche
-    # aux emplacements d'installation habituels.
-    if sys.platform == "win32" and not shutil.which("tesseract"):
-        for _chemin in (
+
+def _trouver_tesseract() -> str | None:
+    """Cherche l'exécutable Tesseract (PATH puis emplacements Windows)."""
+    trouve = shutil.which("tesseract")
+    if trouve:
+        return trouve
+    if sys.platform == "win32":
+        for chemin in (
             r"C:\Program Files\Tesseract-OCR\tesseract.exe",
             r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
             os.path.expandvars(r"%LOCALAPPDATA%\Programs\Tesseract-OCR\tesseract.exe"),
         ):
-            if os.path.exists(_chemin):
-                pytesseract.pytesseract.tesseract_cmd = _chemin
-                break
-except ImportError:
-    OCR_DISPONIBLE = False
+            if os.path.exists(chemin):
+                return chemin
+    return None
+
+
+TESSERACT_CMD = _trouver_tesseract()
+OCR_DISPONIBLE = PDFIUM_DISPONIBLE and TESSERACT_CMD is not None
+
+
+def diagnostic_ocr() -> tuple[bool, str]:
+    """État de la chaîne OCR, en clair (affiché par l'application)."""
+    if not PDFIUM_DISPONIBLE:
+        return False, ("OCR indisponible : bibliothèque pypdfium2 manquante "
+                       "(pip install pypdfium2 Pillow).")
+    if TESSERACT_CMD is None:
+        return False, ("Tesseract n'est pas installé : les factures SCANNÉES "
+                       "ne pourront pas être lues. Installation (2 min) : "
+                       "https://github.com/UB-Mannheim/tesseract/wiki "
+                       "(cochez le pack French) — voir l'onglet Tutoriel §7.")
+    return True, f"OCR prêt (Tesseract : {TESSERACT_CMD})."
 
 # ---------------------------------------------------------------------------
 # 0. CONFIGURATION & LOGGING
@@ -353,11 +376,9 @@ def extraire_texte_pdf(chemin_pdf: Path) -> str:
         return resultat
 
     if not OCR_DISPONIBLE:
-        logger.warning(
-            "%s : PDF scanné et OCR indisponible. Installez pytesseract, "
-            "pypdfium2 et Tesseract (voir README).", chemin_pdf.name
+        raise ValueError(
+            "PDF scanné et OCR indisponible — " + diagnostic_ocr()[1]
         )
-        return resultat
 
     logger.info("%s : PDF scanné détecté, lecture par OCR...", chemin_pdf.name)
     return ocr_pdf(chemin_pdf)
@@ -366,14 +387,38 @@ def extraire_texte_pdf(chemin_pdf: Path) -> str:
 def ocr_pdf(chemin_pdf: Path, dpi: int = 300) -> str:
     """
     OCR d'un PDF scanné : chaque page est convertie en image (pypdfium2)
-    puis lue par Tesseract en français.
+    puis lue par Tesseract (appel direct en sous-processus).
+
+    Les flux standards sont explicitement redirigés et, sous Windows,
+    aucune fenêtre de console n'est ouverte : indispensable pour
+    fonctionner dans une application packagée sans console.
     """
+    import tempfile
+
+    options = {}
+    if sys.platform == "win32":
+        options["creationflags"] = subprocess.CREATE_NO_WINDOW
+
     texte = []
     document = pdfium.PdfDocument(str(chemin_pdf))
     try:
-        for page in document:
-            image = page.render(scale=dpi / 72).to_pil()
-            texte.append(pytesseract.image_to_string(image, lang="fra"))
+        with tempfile.TemporaryDirectory() as dossier:
+            for numero, page in enumerate(document):
+                image = page.render(scale=dpi / 72).to_pil()
+                chemin_image = os.path.join(dossier, f"page_{numero}.png")
+                image.save(chemin_image)
+                resultat = subprocess.run(
+                    [TESSERACT_CMD, chemin_image, "stdout",
+                     "-l", "fra", "--dpi", str(dpi)],
+                    stdin=subprocess.DEVNULL, capture_output=True,
+                    timeout=180, **options,
+                )
+                if resultat.returncode != 0:
+                    raise ValueError(
+                        "Tesseract a échoué : "
+                        + resultat.stderr.decode(errors="replace")[:300]
+                    )
+                texte.append(resultat.stdout.decode("utf-8", errors="replace"))
     finally:
         document.close()
     return "\n".join(texte)
@@ -807,9 +852,10 @@ def traiter_facture(chemin_pdf: Path, email_info: dict, config: dict,
         return True
     except Exception as erreur:  # noqa: BLE001 - on isole chaque facture
         logger.error(
-            "❌ ÉCHEC  | %s | %s (le PDF reste dans %s pour traitement manuel)",
-            chemin_pdf.name, erreur, config["dossier_temp"],
+            "❌ ÉCHEC  | %s | [%s] %s (le PDF reste dans %s pour traitement manuel)",
+            chemin_pdf.name, type(erreur).__name__, erreur, config["dossier_temp"],
         )
+        logger.debug("Détail de l'échec %s", chemin_pdf.name, exc_info=True)
         return False
 
 
