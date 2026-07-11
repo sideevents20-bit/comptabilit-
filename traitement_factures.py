@@ -935,7 +935,7 @@ def supprimer_doublons(config: dict) -> tuple[int, int]:
             df.reindex(columns=COLONNES_EXCEL).to_excel(excel, index=False)
 
     sauvegarder_empreintes(
-        base, {h: str(p.relative_to(base)) for h, p in uniques.items()})
+        base, {h: p.relative_to(base).as_posix() for h, p in uniques.items()})
     logger.info("Nettoyage des doublons : %d fichier(s), %d ligne(s) Excel.",
                 len(copies), lignes_retirees)
     return len(copies), lignes_retirees
@@ -968,11 +968,11 @@ def reclasser_facture(config: dict, chemin_actuel: Path,
             df.loc[masque, "Nom du fichier"] = destination.name
             df.reindex(columns=COLONNES_EXCEL).to_excel(excel, index=False)
 
-    ancien_relatif = str(chemin_actuel.relative_to(base))
+    ancien_relatif = chemin_actuel.relative_to(base).as_posix()
     empreintes = charger_empreintes(base)
     for h, chemin in list(empreintes.items()):
         if chemin == ancien_relatif:
-            empreintes[h] = str(destination.relative_to(base))
+            empreintes[h] = destination.relative_to(base).as_posix()
     sauvegarder_empreintes(base, empreintes)
 
     logger.info("Facture reclassée : %s -> %s", chemin_actuel.name,
@@ -1010,8 +1010,8 @@ def traiter_facture(chemin_pdf: Path, email_info: dict, config: dict,
         donnees = analyser_facture(chemin_pdf, clients, email_info["expediteur"])
         destination = classer_facture(chemin_pdf, donnees, config["dossier_base"])
         ajouter_ligne_excel(donnees, destination.name, config["fichier_excel"])
-        empreintes[empreinte] = str(
-            destination.relative_to(config["dossier_base"]))
+        empreintes[empreinte] = destination.relative_to(
+            config["dossier_base"]).as_posix()
         sauvegarder_empreintes(config["dossier_base"], empreintes)
         logger.info(
             "✅ SUCCÈS | %s | client=%s | fournisseur=%s | TTC=%.2f €",

@@ -549,8 +549,8 @@ class DialogueSaisie(tk.Toplevel):
             moteur.ajouter_ligne_excel(donnees, destination.name,
                                        config["fichier_excel"])
             empreintes = moteur.charger_empreintes(config["dossier_base"])
-            empreintes[empreinte] = str(
-                destination.relative_to(config["dossier_base"]))
+            empreintes[empreinte] = destination.relative_to(
+                config["dossier_base"]).as_posix()
             moteur.sauvegarder_empreintes(config["dossier_base"], empreintes)
         except Exception as erreur:  # noqa: BLE001
             self.label_erreur.config(text=f"Enregistrement impossible : {erreur}")
