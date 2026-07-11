@@ -4,6 +4,7 @@
 # Données de travail générées par le script
 _temp_factures/
 Factures_Clients/
+Exports_TVA/
 tableau_tva_global.xlsx
 traitement_factures.log
 

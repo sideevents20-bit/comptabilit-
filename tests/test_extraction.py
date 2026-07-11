@@ -304,6 +304,72 @@ def test_reclassement_facture():
         assert list(empreintes.values()) == [f"ICG_40/{destination.name}"]
 
 
+# ---------------------------------------------------------------------------
+# Export vers le classeur TVA officiel (modele_tva.xlsx)
+# ---------------------------------------------------------------------------
+
+def test_export_classeur_tva():
+    import openpyxl
+    import pandas as pd
+
+    import export_tva
+
+    racine = Path(__file__).resolve().parent.parent
+    with tempfile.TemporaryDirectory() as dossier:
+        excel = Path(dossier) / "tableau.xlsx"
+        pd.DataFrame([
+            # Vente : ICG 40 émet la facture (fournisseur = client).
+            {"Date de traitement": "t", "Date de facture": "2026-06-08",
+             "Client": "ICG 40", "Fournisseur": "ICG_40_FACTURE",
+             "Nom du fichier": "vente1.pdf", "Total HT": 60000.0,
+             "TVA 20%": 12000.0, "TVA 10%": None, "TVA 5.5%": None,
+             "Total TTC": 72000.0},
+            # Achat fournisseur externe à 20 %.
+            {"Date de traitement": "t", "Date de facture": "2026-06-01",
+             "Client": "ICG 40", "Fournisseur": "POINT_P",
+             "Nom du fichier": "achat1.pdf", "Total HT": 1384.83,
+             "TVA 20%": 276.97, "TVA 10%": None, "TVA 5.5%": None,
+             "Total TTC": 1661.80},
+            # Achat sans TVA détectée -> code 0.
+            {"Date de traitement": "t", "Date de facture": "2026-06-12",
+             "Client": "ICG 40", "Fournisseur": "FINANCES_PUBLIQUES",
+             "Nom du fichier": "achat2.pdf", "Total HT": None,
+             "TVA 20%": None, "TVA 10%": None, "TVA 5.5%": None,
+             "Total TTC": 100.32},
+            # Autre mois : ne doit PAS apparaître dans l'export de juin.
+            {"Date de traitement": "t", "Date de facture": "2026-05-20",
+             "Client": "ICG 40", "Fournisseur": "EURO_PNEU",
+             "Nom du fichier": "mai.pdf", "Total HT": 1639.32,
+             "TVA 20%": 327.86, "TVA 10%": None, "TVA 5.5%": None,
+             "Total TTC": 1967.18},
+        ]).to_excel(excel, index=False)
+
+        config = {"fichier_excel": excel,
+                  "modele_tva": racine / "modele_tva.xlsx",
+                  "dossier_exports": Path(dossier) / "Exports_TVA"}
+
+        assert export_tva.mois_disponibles(excel) == ["2026-06", "2026-05"]
+        destination, exportees, ignorees = export_tva.exporter_mois(
+            config, "2026-06")
+        assert exportees == 3 and ignorees == 0
+
+        classeur = openpyxl.load_workbook(destination)
+        achats = classeur["TVA Deduct"]
+        ventes = classeur["TVA Collectée"]
+        # Achats triés par date : POINT_P (code 2) puis FINANCES (code 0).
+        assert achats["D8"].value == "POINT_P"
+        assert achats["F8"].value == 2 and achats["J8"].value == 1661.80
+        assert achats["D9"].value == "FINANCES_PUBLIQUES"
+        assert achats["F9"].value == 0 and achats["J9"].value == 100.32
+        # La formule du modèle est préservée (HT calculé par Excel).
+        assert str(achats["E8"].value).startswith("=IF(")
+        # Vente en TVA Collectée avec le bon code et le bon TTC.
+        assert ventes["A7"].value == "ICG 40"
+        assert ventes["D7"].value == 2 and ventes["E7"].value == 72000.0
+        # Titres mensualisés.
+        assert "06/2026" in classeur["Résumé"]["B2"].value
+
+
 if __name__ == "__main__":
     # Exécution sans pytest : lance toutes les fonctions test_*.
     erreurs = 0

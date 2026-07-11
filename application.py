@@ -154,11 +154,21 @@ TUTORIEL = [
     ("puce", "•  « 🔄 Réanalyser » retente la lecture automatique (utile "
              "après installation de Tesseract, par exemple)."),
 
-    ("titre", "5. L'onglet « Synthèse TVA »"),
+    ("titre", "5. L'onglet « Synthèse TVA » et le classeur officiel"),
     ("normal", "Les totaux par mois (HT, TVA 20 %, 10 %, 5,5 %, TTC), "
-               "calculés d'après la date de facture : votre base pour la "
-               "déclaration de TVA. La ligne TOTAL cumule tout le tableau. "
-               "Pour le détail complet, « 📊 Ouvrir le tableau Excel »."),
+               "calculés d'après la date de facture. La ligne TOTAL cumule "
+               "tout le tableau. Pour le détail complet, « 📊 Tableau "
+               "Excel »."),
+    ("puce", "•  « 📤 Générer le classeur TVA du mois... » crée le classeur "
+             "mensuel au format du modèle officiel (feuilles TVA Deduct / "
+             "TVA Collectée / Résumé, formules comprises) dans le dossier "
+             "Exports_TVA. Les achats vont en TVA Deduct, les ventes en TVA "
+             "Collectée, avec le bon code TVA (2=20 %, 1=10 %, 55=5,5 %)."),
+    ("puce", "•  Le modèle offre 14 lignes d'achats et 31 lignes de ventes "
+             "par mois : au-delà, l'application vous signale les factures à "
+             "reporter à la main."),
+    ("puce", "•  Le fichier modele_tva.xlsx doit rester à côté de "
+             "l'application (fourni dans le dossier d'installation)."),
 
     ("titre", "6. L'onglet « Clients » : ranger les dossiers"),
     ("normal", "La liste de gauche montre chaque dossier client avec son "
@@ -869,10 +879,14 @@ class ApplicationFactures(tk.Tk):
         cadre = ttk.Frame(self.onglets, padding=8)
         self.onglets.add(cadre, text="  📊 Synthèse TVA  ")
 
-        ttk.Label(cadre, style="Info.TLabel",
+        barre = ttk.Frame(cadre)
+        barre.pack(fill="x", pady=(0, 6))
+        ttk.Label(barre, style="Info.TLabel",
                   text="Totaux par mois (d'après la date de facture) — "
                        "la ligne TOTAL cumule l'ensemble du tableau.",
-                  ).pack(fill="x", pady=(0, 6))
+                  ).pack(side="left")
+        ttk.Button(barre, text="📤 Générer le classeur TVA du mois...",
+                   command=self.exporter_classeur_tva).pack(side="right")
 
         colonnes = ("mois", "nb", "ht", "tva20", "tva10", "tva55",
                     "tva_totale", "ttc")
@@ -1219,6 +1233,62 @@ class ApplicationFactures(tk.Tk):
         boutons.pack(fill="x", pady=(12, 0))
         ttk.Button(boutons, text="Déplacer", command=valider).pack(side="right")
         ttk.Button(boutons, text="Annuler",
+                   command=dialogue.destroy).pack(side="right", padx=6)
+        _centrer_sur(dialogue, self)
+
+    # --- Export vers le classeur TVA officiel -------------------------------------------
+
+    def exporter_classeur_tva(self) -> None:
+        """Génère le classeur mensuel au format du modèle officiel."""
+        import export_tva
+
+        config = config_locale()
+        mois = export_tva.mois_disponibles(config["fichier_excel"])
+        if not mois:
+            messagebox.showinfo(TITRE, "Aucune facture traitée : rien à exporter.")
+            return
+
+        dialogue = tk.Toplevel(self)
+        dialogue.title("Générer le classeur TVA")
+        dialogue.configure(bg=COULEURS["fond"])
+        dialogue.transient(self)
+        dialogue.grab_set()
+        corps = ttk.Frame(dialogue, padding=16)
+        corps.pack(fill="both", expand=True)
+        ttk.Label(corps, text="Mois à exporter (le classeur reprend le "
+                              "modèle officiel,\nformules comprises) :"
+                  ).pack(anchor="w", pady=(0, 8))
+        choix = ttk.Combobox(corps, values=mois, state="readonly", width=12)
+        choix.set(mois[0])
+        choix.pack(anchor="w")
+        resultat = ttk.Label(corps, text="", wraplength=380,
+                             foreground=COULEURS["texte_doux"])
+        resultat.pack(anchor="w", pady=(8, 0))
+
+        def generer():
+            try:
+                destination, exportees, ignorees = export_tva.exporter_mois(
+                    config, choix.get())
+            except Exception as erreur:  # noqa: BLE001
+                resultat.config(text=f"Export impossible : {erreur}",
+                                foreground=COULEURS["erreur"])
+                return
+            message = f"✓ {destination.name} généré ({exportees} facture(s))."
+            if ignorees:
+                message += (f"  ⚠ {ignorees} facture(s) non reportée(s) "
+                            "faute de place dans le modèle : à saisir "
+                            "manuellement.")
+            resultat.config(text=message,
+                            foreground=COULEURS["alerte"] if ignorees
+                            else COULEURS["ok"])
+            self._journal(logging.INFO, message)
+            _ouvrir(destination)
+
+        boutons = ttk.Frame(corps)
+        boutons.pack(fill="x", pady=(12, 0))
+        ttk.Button(boutons, text="Générer et ouvrir",
+                   command=generer).pack(side="right")
+        ttk.Button(boutons, text="Fermer",
                    command=dialogue.destroy).pack(side="right", padx=6)
         _centrer_sur(dialogue, self)
 

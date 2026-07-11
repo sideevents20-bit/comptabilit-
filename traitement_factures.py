@@ -207,6 +207,9 @@ def charger_configuration(exiger_imap: bool = True) -> dict:
         "dossier_temp": Path(os.getenv("DOSSIER_TEMP", "./_temp_factures")),
         "fichier_excel": Path(os.getenv("FICHIER_EXCEL", "./tableau_tva_global.xlsx")),
         "fichier_clients": Path(os.getenv("FICHIER_CLIENTS", "./clients.txt")),
+        # Export mensuel vers le classeur TVA officiel (modèle à formules).
+        "modele_tva": Path(os.getenv("MODELE_TVA", "./modele_tva.xlsx")),
+        "dossier_exports": Path(os.getenv("DOSSIER_EXPORTS", "./Exports_TVA")),
         "mots_cles": [
             m.strip().lower()
             for m in os.getenv("MOTS_CLES_OBJET", "facture,invoice").split(",")

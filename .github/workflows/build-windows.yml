@@ -43,6 +43,7 @@ jobs:
           Copy-Item "dist/TraitementFactures.exe" "TraitementFactures/"
           Copy-Item ".env.example" "TraitementFactures/"
           Copy-Item "clients.txt" "TraitementFactures/"
+          Copy-Item "modele_tva.xlsx" "TraitementFactures/"
           Copy-Item "README.md" "TraitementFactures/"
           Set-Content -Path "TraitementFactures/LISEZMOI-INSTALLATION.txt" -Encoding UTF8 -Value @"
           TRAITEMENT DES FACTURES — INSTALLATION
