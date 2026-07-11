@@ -11,10 +11,12 @@ Lancement :  python -m pytest tests/  (ou simplement : python tests/test_extract
 """
 
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import traitement_factures as moteur  # noqa: E402
 from traitement_factures import (  # noqa: E402
     convertir_montant,
     extraire_date_facture,
@@ -219,6 +221,87 @@ def test_identifier_client_variantes():
 def test_nettoyer_nom_fichier():
     assert nettoyer_nom_fichier("SARL Dupont & Cie / Été") == "SARL_Dupont_Cie_Ete"
     assert nettoyer_nom_fichier("") == "sans_nom"
+
+
+# ---------------------------------------------------------------------------
+# Doublons : fichiers identiques supprimés, tableau Excel nettoyé
+# ---------------------------------------------------------------------------
+
+def test_suppression_doublons():
+    import pandas as pd
+
+    with tempfile.TemporaryDirectory() as dossier:
+        base = Path(dossier) / "Factures_Clients"
+        excel = Path(dossier) / "tableau.xlsx"
+        (base / "ICG_40").mkdir(parents=True)
+        (base / "AUTRE").mkdir()
+
+        # Deux fichiers au contenu identique (doublon inter-dossiers)
+        # et un fichier distinct.
+        (base / "ICG_40" / "originale.pdf").write_bytes(b"CONTENU-A")
+        (base / "AUTRE" / "copie.pdf").write_bytes(b"CONTENU-A")
+        (base / "ICG_40" / "unique.pdf").write_bytes(b"CONTENU-B")
+
+        pd.DataFrame([
+            {"Date de traitement": "t1", "Date de facture": "2026-06-01",
+             "Client": "ICG 40", "Fournisseur": "X",
+             "Nom du fichier": "originale.pdf", "Total HT": 100,
+             "TVA 20%": 20, "TVA 10%": None, "TVA 5.5%": None,
+             "Total TTC": 120},
+            {"Date de traitement": "t2", "Date de facture": "2026-06-01",
+             "Client": "AUTRE", "Fournisseur": "X",
+             "Nom du fichier": "copie.pdf", "Total HT": 100,
+             "TVA 20%": 20, "TVA 10%": None, "TVA 5.5%": None,
+             "Total TTC": 120},
+            {"Date de traitement": "t3", "Date de facture": "2026-06-02",
+             "Client": "ICG 40", "Fournisseur": "Y",
+             "Nom du fichier": "unique.pdf", "Total HT": 50,
+             "TVA 20%": 10, "TVA 10%": None, "TVA 5.5%": None,
+             "Total TTC": 60},
+        ]).to_excel(excel, index=False)
+
+        config = {"dossier_base": base, "fichier_excel": excel}
+        fichiers, lignes = moteur.supprimer_doublons(config)
+
+        assert fichiers == 1                       # une des deux copies part
+        restants = {p.name for p in base.rglob("*.pdf")}
+        # Il reste exactement UN exemplaire du contenu dupliqué + l'unique.
+        assert "unique.pdf" in restants and len(restants) == 2
+        supprime = ({"originale.pdf", "copie.pdf"} - restants).pop()
+        df = pd.read_excel(excel)
+        # La ligne Excel du fichier supprimé est retirée, l'autre subsiste.
+        assert len(df) == 2 and supprime not in set(df["Nom du fichier"])
+        # Le registre d'empreintes est reconstruit avec les fichiers restants.
+        assert len(moteur.charger_empreintes(base)) == 2
+
+
+def test_reclassement_facture():
+    import pandas as pd
+
+    with tempfile.TemporaryDirectory() as dossier:
+        base = Path(dossier) / "Factures_Clients"
+        excel = Path(dossier) / "tableau.xlsx"
+        (base / "_A_CLASSER").mkdir(parents=True)
+        pdf = base / "_A_CLASSER" / "2026-06-01_X_120.00.pdf"
+        pdf.write_bytes(b"CONTENU-C")
+        moteur.sauvegarder_empreintes(
+            base, {moteur.empreinte_pdf(pdf): "_A_CLASSER/" + pdf.name})
+        pd.DataFrame([
+            {"Date de traitement": "t1", "Date de facture": "2026-06-01",
+             "Client": "_A_CLASSER", "Fournisseur": "X",
+             "Nom du fichier": pdf.name, "Total HT": 100, "TVA 20%": 20,
+             "TVA 10%": None, "TVA 5.5%": None, "Total TTC": 120},
+        ]).to_excel(excel, index=False)
+
+        config = {"dossier_base": base, "fichier_excel": excel}
+        destination = moteur.reclasser_facture(config, pdf, "ICG 40")
+
+        assert destination.parent.name == "ICG_40" and destination.exists()
+        assert not pdf.exists()
+        df = pd.read_excel(excel)
+        assert df.iloc[0]["Client"] == "ICG 40"
+        empreintes = moteur.charger_empreintes(base)
+        assert list(empreintes.values()) == [f"ICG_40/{destination.name}"]
 
 
 if __name__ == "__main__":

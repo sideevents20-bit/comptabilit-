@@ -24,7 +24,9 @@ Usage :
 """
 
 import email
+import hashlib
 import imaplib
+import json
 import logging
 import os
 import re
@@ -117,7 +119,7 @@ def diagnostic_ocr() -> tuple[str, str]:
         return "absent", ("Tesseract n'est pas installé : les factures "
                           "SCANNÉES ne pourront pas être lues. Installation "
                           "(2 min) : https://github.com/UB-Mannheim/tesseract/wiki "
-                          "(cochez le pack French) — voir l'onglet Tutoriel §7.")
+                          "(cochez le pack French) — voir l'onglet Tutoriel §8.")
     if "fra" not in LANGUES_TESSERACT:
         return "partiel", (
             "Tesseract est installé mais SANS le pack de langue française : "
@@ -865,6 +867,120 @@ def ajouter_ligne_excel(donnees: dict, nom_fichier: str, fichier_excel: Path) ->
 
 
 # ---------------------------------------------------------------------------
+# 4 bis. DOUBLONS & RECLASSEMENT
+# ---------------------------------------------------------------------------
+
+def empreinte_pdf(chemin: Path) -> str:
+    """Empreinte SHA-256 du contenu du fichier (identifie les doublons)."""
+    return hashlib.sha256(chemin.read_bytes()).hexdigest()
+
+
+def _fichier_empreintes(dossier_base: Path) -> Path:
+    return dossier_base / ".empreintes.json"
+
+
+def charger_empreintes(dossier_base: Path) -> dict[str, str]:
+    """Registre empreinte -> chemin relatif de la facture déjà classée."""
+    fichier = _fichier_empreintes(dossier_base)
+    if fichier.exists():
+        try:
+            return json.loads(fichier.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return {}
+    return {}
+
+
+def sauvegarder_empreintes(dossier_base: Path, empreintes: dict[str, str]) -> None:
+    dossier_base.mkdir(parents=True, exist_ok=True)
+    _fichier_empreintes(dossier_base).write_text(
+        json.dumps(empreintes, indent=1, ensure_ascii=False), encoding="utf-8")
+
+
+def supprimer_doublons(config: dict) -> tuple[int, int]:
+    """
+    Nettoie les doublons existants : fichiers PDF au contenu identique dans
+    le dossier de classement (le premier est conservé, les copies sont
+    supprimées) et lignes correspondantes ou strictement dupliquées du
+    tableau Excel. Reconstruit le registre des empreintes.
+
+    Retourne (nb_fichiers_supprimés, nb_lignes_excel_retirées).
+    """
+    base = config["dossier_base"]
+    uniques: dict[str, Path] = {}
+    copies: list[Path] = []
+    for pdf in sorted(base.rglob("*.pdf")) if base.exists() else []:
+        h = empreinte_pdf(pdf)
+        if h in uniques:
+            copies.append(pdf)
+        else:
+            uniques[h] = pdf
+
+    for pdf in copies:
+        pdf.unlink()
+        logger.info("Doublon supprimé : %s", pdf)
+
+    lignes_retirees = 0
+    excel = config["fichier_excel"]
+    if excel.exists():
+        df = pd.read_excel(excel)
+        avant = len(df)
+        noms_supprimes = {p.name for p in copies}
+        if noms_supprimes:
+            df = df[~df["Nom du fichier"].astype(str).isin(noms_supprimes)]
+        # Lignes identiques (hors date de traitement) : on garde la première.
+        colonnes_cles = [c for c in COLONNES_EXCEL if c != "Date de traitement"]
+        df = df.drop_duplicates(subset=colonnes_cles, keep="first")
+        lignes_retirees = avant - len(df)
+        if lignes_retirees:
+            df.reindex(columns=COLONNES_EXCEL).to_excel(excel, index=False)
+
+    sauvegarder_empreintes(
+        base, {h: str(p.relative_to(base)) for h, p in uniques.items()})
+    logger.info("Nettoyage des doublons : %d fichier(s), %d ligne(s) Excel.",
+                len(copies), lignes_retirees)
+    return len(copies), lignes_retirees
+
+
+def reclasser_facture(config: dict, chemin_actuel: Path,
+                      nouveau_client: str) -> Path:
+    """
+    Déplace une facture déjà classée vers le dossier d'un autre client et
+    met à jour la colonne Client du tableau Excel + le registre d'empreintes.
+    """
+    base = config["dossier_base"]
+    dossier_cible = base / nettoyer_nom_fichier(nouveau_client)
+    dossier_cible.mkdir(parents=True, exist_ok=True)
+
+    destination = dossier_cible / chemin_actuel.name
+    compteur = 1
+    while destination.exists():
+        destination = dossier_cible / (
+            f"{chemin_actuel.stem.rsplit('_v', 1)[0]}_v{compteur}.pdf")
+        compteur += 1
+    shutil.move(str(chemin_actuel), str(destination))
+
+    excel = config["fichier_excel"]
+    if excel.exists():
+        df = pd.read_excel(excel)
+        masque = df["Nom du fichier"].astype(str) == chemin_actuel.name
+        if masque.any():
+            df.loc[masque, "Client"] = nouveau_client
+            df.loc[masque, "Nom du fichier"] = destination.name
+            df.reindex(columns=COLONNES_EXCEL).to_excel(excel, index=False)
+
+    ancien_relatif = str(chemin_actuel.relative_to(base))
+    empreintes = charger_empreintes(base)
+    for h, chemin in list(empreintes.items()):
+        if chemin == ancien_relatif:
+            empreintes[h] = str(destination.relative_to(base))
+    sauvegarder_empreintes(base, empreintes)
+
+    logger.info("Facture reclassée : %s -> %s", chemin_actuel.name,
+                destination)
+    return destination
+
+
+# ---------------------------------------------------------------------------
 # 5. ORCHESTRATION
 # ---------------------------------------------------------------------------
 
@@ -874,11 +990,29 @@ def traiter_facture(chemin_pdf: Path, email_info: dict, config: dict,
     Traite UNE facture PDF de bout en bout (analyse -> classement -> Excel).
     Retourne True en cas de succès, False sinon (le PDF reste alors dans
     le dossier temporaire pour vérification manuelle).
+
+    Un PDF au contenu strictement identique à une facture déjà classée est
+    un DOUBLON : il est supprimé sans être retraité (pas de double ligne
+    dans le tableau Excel).
     """
     try:
+        empreinte = empreinte_pdf(chemin_pdf)
+        empreintes = charger_empreintes(config["dossier_base"])
+        deja_classee = empreintes.get(empreinte)
+        if deja_classee and (config["dossier_base"] / deja_classee).exists():
+            chemin_pdf.unlink()
+            logger.info(
+                "🔁 DOUBLON | %s : contenu identique à %s — ignoré.",
+                chemin_pdf.name, deja_classee,
+            )
+            return True
+
         donnees = analyser_facture(chemin_pdf, clients, email_info["expediteur"])
         destination = classer_facture(chemin_pdf, donnees, config["dossier_base"])
         ajouter_ligne_excel(donnees, destination.name, config["fichier_excel"])
+        empreintes[empreinte] = str(
+            destination.relative_to(config["dossier_base"]))
+        sauvegarder_empreintes(config["dossier_base"], empreintes)
         logger.info(
             "✅ SUCCÈS | %s | client=%s | fournisseur=%s | TTC=%.2f €",
             destination.name, donnees["client"], donnees["fournisseur"],

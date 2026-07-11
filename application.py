@@ -126,10 +126,17 @@ TUTORIEL = [
     ("puce", "•  📄 Traiter des PDF... permet d'importer des factures depuis "
              "votre ordinateur, sans passer par l'email (l'original n'est "
              "jamais déplacé)."),
+    ("puce", "•  Les DOUBLONS sont détectés automatiquement : une facture au "
+             "contenu identique à une facture déjà classée est ignorée (pas "
+             "de double ligne dans le tableau). Le bouton 🧹 Doublons "
+             "nettoie en plus les doublons déjà présents."),
 
     ("titre", "3. L'onglet « Factures traitées »"),
     ("puce", "•  Tapez dans le champ 🔍 pour filtrer par client, fournisseur "
              "ou nom de fichier."),
+    ("puce", "•  Cliquez sur l'en-tête d'une colonne pour trier (un second "
+             "clic inverse l'ordre) — valable dans tous les tableaux de "
+             "l'application."),
     ("puce", "•  Double-cliquez sur une ligne pour ouvrir le PDF classé."),
     ("puce", "•  Les factures sont rangées dans Factures_Clients\\<Client>\\ "
              "et renommées : AAAA-MM-JJ_Fournisseur_MontantTTC.pdf."),
@@ -153,7 +160,17 @@ TUTORIEL = [
                "déclaration de TVA. La ligne TOTAL cumule tout le tableau. "
                "Pour le détail complet, « 📊 Ouvrir le tableau Excel »."),
 
-    ("titre", "6. La liste des clients"),
+    ("titre", "6. L'onglet « Clients » : ranger les dossiers"),
+    ("normal", "La liste de gauche montre chaque dossier client avec son "
+               "nombre de factures et son total TTC ; cliquez sur un client "
+               "pour voir ses factures à droite."),
+    ("puce", "•  « ➡ Déplacer vers un autre client... » corrige un mauvais "
+             "classement : le PDF change de dossier et la ligne du tableau "
+             "Excel est mise à jour automatiquement."),
+    ("puce", "•  Pensez-y surtout pour vider le dossier _A_CLASSER (factures "
+             "dont le client n'a pas été reconnu)."),
+
+    ("titre", "7. La liste des clients"),
     ("normal", "L'application reconnaît le client d'une facture en cherchant "
                "son nom dans le texte du PDF. La liste se trouve dans le "
                "fichier clients.txt (un client par ligne). Si un client "
@@ -163,7 +180,7 @@ TUTORIEL = [
                "Une facture dont le client n'est pas reconnu va dans le "
                "dossier _A_CLASSER."),
 
-    ("titre", "7. Les factures scannées (OCR)"),
+    ("titre", "8. Les factures scannées (OCR)"),
     ("normal", "Les factures photographiées ou scannées n'ont pas de texte "
                "lisible : l'application utilise alors Tesseract OCR, à "
                "installer une fois sur l'ordinateur :"),
@@ -184,7 +201,7 @@ TUTORIEL = [
              "C:\\Program Files\\Tesseract-OCR\\tessdata, puis relancez "
              "l'application."),
 
-    ("titre", "8. Problèmes fréquents"),
+    ("titre", "9. Problèmes fréquents"),
     ("puce", "•  « Relève impossible » → vérifiez le mot de passe "
              "d'application dans ⚙️ Réglages (bouton Tester la connexion) et "
              "votre connexion internet."),
@@ -211,6 +228,35 @@ def _euros(valeur) -> str:
         return f"{float(valeur):,.2f}".replace(",", " ").replace(".", ",")
     except (TypeError, ValueError):
         return ""
+
+
+def rendre_triable(tableau: ttk.Treeview) -> None:
+    """
+    Rend un Treeview triable : un clic sur l'en-tête d'une colonne trie
+    (croissant), un second clic inverse. Les montants au format français
+    ("24 288,79") sont triés numériquement, le reste alphabétiquement.
+    """
+    def cle_de_tri(valeur: str):
+        nettoye = valeur.replace(" ", "").replace(" ", "").replace(",", ".")
+        try:
+            return (0, float(nettoye), "")
+        except ValueError:
+            return (1, 0.0, valeur.lower())
+
+    def trier(colonne: str, inverse: bool) -> None:
+        lignes = [(tableau.set(item, colonne), item)
+                  for item in tableau.get_children("")]
+        lignes.sort(key=lambda paire: cle_de_tri(paire[0]), reverse=inverse)
+        for position, (_, item) in enumerate(lignes):
+            tableau.move(item, "", position)
+            # Ré-applique le rayage une ligne sur deux après le tri.
+            if "paire" in tableau.item(item, "tags") or position % 2:
+                tableau.item(item, tags=("paire",) if position % 2 else ())
+        tableau.heading(colonne,
+                        command=lambda: trier(colonne, not inverse))
+
+    for colonne in tableau["columns"]:
+        tableau.heading(colonne, command=lambda c=colonne: trier(c, False))
 
 
 def _centrer_sur(fenetre: tk.Toplevel, parent: tk.Misc) -> None:
@@ -497,10 +543,15 @@ class DialogueSaisie(tk.Toplevel):
 
         try:
             config = config_locale()
+            empreinte = moteur.empreinte_pdf(self.chemin_pdf)
             destination = moteur.classer_facture(self.chemin_pdf, donnees,
                                                  config["dossier_base"])
             moteur.ajouter_ligne_excel(donnees, destination.name,
                                        config["fichier_excel"])
+            empreintes = moteur.charger_empreintes(config["dossier_base"])
+            empreintes[empreinte] = str(
+                destination.relative_to(config["dossier_base"]))
+            moteur.sauvegarder_empreintes(config["dossier_base"], empreintes)
         except Exception as erreur:  # noqa: BLE001
             self.label_erreur.config(text=f"Enregistrement impossible : {erreur}")
             return
@@ -546,9 +597,9 @@ class ApplicationFactures(tk.Tk):
         libelles = {
             "ok": ("OCR : ✓ Tesseract prêt (français)", COULEURS["ok"]),
             "partiel": ("OCR : ⚠ pack français manquant — lecture dégradée "
-                        "(voir Tutoriel §7)", COULEURS["alerte"]),
+                        "(voir Tutoriel §8)", COULEURS["alerte"]),
             "absent": ("OCR : ✗ Tesseract non installé (factures scannées "
-                       "illisibles — voir Tutoriel §7)", COULEURS["erreur"]),
+                       "illisibles — voir Tutoriel §8)", COULEURS["erreur"]),
         }
         texte_ocr, couleur_ocr = libelles[statut_ocr]
         self.label_ocr.config(text=texte_ocr, foreground=couleur_ocr)
@@ -670,6 +721,7 @@ class ApplicationFactures(tk.Tk):
         self.onglets.pack(fill="both", expand=True, padx=12, pady=(4, 4))
         self._onglet_historique()
         self._onglet_a_verifier()
+        self._onglet_clients()
         self._onglet_synthese()
         self._onglet_journal()
         self._onglet_tutoriel()
@@ -710,6 +762,7 @@ class ApplicationFactures(tk.Tk):
         self.tableau.configure(yscrollcommand=barre_v.set)
         self.tableau.pack(side="left", fill="both", expand=True)
         barre_v.pack(side="right", fill="y")
+        rendre_triable(self.tableau)
 
     def _onglet_a_verifier(self) -> None:
         cadre = ttk.Frame(self.onglets, padding=8)
@@ -750,6 +803,67 @@ class ApplicationFactures(tk.Tk):
         self.tableau_verifier.configure(yscrollcommand=barre_v.set)
         self.tableau_verifier.pack(side="left", fill="both", expand=True)
         barre_v.pack(side="right", fill="y")
+        rendre_triable(self.tableau_verifier)
+
+    def _onglet_clients(self) -> None:
+        cadre = ttk.Frame(self.onglets, padding=8)
+        self.onglets.add(cadre, text="  👥 Clients  ")
+
+        boutons = ttk.Frame(cadre)
+        boutons.pack(fill="x", pady=(0, 6))
+        ttk.Button(boutons, text="👁 Ouvrir la facture",
+                   command=self._ouvrir_facture_client).pack(side="left")
+        ttk.Button(boutons, text="➡ Déplacer vers un autre client...",
+                   command=self._deplacer_facture).pack(side="left", padx=6)
+        ttk.Button(boutons, text="📁 Ouvrir le dossier du client",
+                   command=self._ouvrir_dossier_client).pack(side="left")
+        ttk.Button(boutons, text="🧹 Supprimer les doublons",
+                   command=self.nettoyer_doublons).pack(side="right")
+        ttk.Label(boutons, text="(cliquez sur les en-têtes pour trier)",
+                  style="Info.TLabel").pack(side="right", padx=8)
+
+        panneau = ttk.PanedWindow(cadre, orient="horizontal")
+        panneau.pack(fill="both", expand=True)
+
+        # Gauche : les dossiers clients.
+        gauche = ttk.Frame(panneau)
+        self.tableau_clients = ttk.Treeview(
+            gauche, columns=("client", "nb", "ttc"), show="headings")
+        for colonne, entete, largeur in (("client", "Client", 200),
+                                         ("nb", "Factures", 70),
+                                         ("ttc", "Total TTC", 110)):
+            self.tableau_clients.heading(colonne, text=entete)
+            self.tableau_clients.column(
+                colonne, width=largeur,
+                anchor="w" if colonne == "client" else "e")
+        self.tableau_clients.bind("<<TreeviewSelect>>",
+                                  lambda _e: self._lister_factures_client())
+        barre_g = ttk.Scrollbar(gauche, orient="vertical",
+                                command=self.tableau_clients.yview)
+        self.tableau_clients.configure(yscrollcommand=barre_g.set)
+        self.tableau_clients.pack(side="left", fill="both", expand=True)
+        barre_g.pack(side="right", fill="y")
+        panneau.add(gauche, weight=1)
+
+        # Droite : les factures du client sélectionné.
+        droite = ttk.Frame(panneau)
+        self.tableau_factures_client = ttk.Treeview(
+            droite, columns=("fichier", "taille"), show="headings")
+        self.tableau_factures_client.heading("fichier", text="Facture")
+        self.tableau_factures_client.heading("taille", text="Taille")
+        self.tableau_factures_client.column("fichier", width=420, anchor="w")
+        self.tableau_factures_client.column("taille", width=70, anchor="e")
+        self.tableau_factures_client.bind(
+            "<Double-1>", lambda _e: self._ouvrir_facture_client())
+        barre_d = ttk.Scrollbar(droite, orient="vertical",
+                                command=self.tableau_factures_client.yview)
+        self.tableau_factures_client.configure(yscrollcommand=barre_d.set)
+        self.tableau_factures_client.pack(side="left", fill="both", expand=True)
+        barre_d.pack(side="right", fill="y")
+        panneau.add(droite, weight=2)
+
+        rendre_triable(self.tableau_clients)
+        rendre_triable(self.tableau_factures_client)
 
     def _onglet_synthese(self) -> None:
         cadre = ttk.Frame(self.onglets, padding=8)
@@ -777,6 +891,7 @@ class ApplicationFactures(tk.Tk):
         self.tableau_synthese.configure(yscrollcommand=barre_v.set)
         self.tableau_synthese.pack(side="left", fill="both", expand=True)
         barre_v.pack(side="right", fill="y")
+        rendre_triable(self.tableau_synthese)
 
     def _onglet_journal(self) -> None:
         cadre = ttk.Frame(self.onglets, padding=8)
@@ -1020,12 +1135,144 @@ class ApplicationFactures(tk.Tk):
             chemin.unlink(missing_ok=True)
             self.rafraichir_a_verifier()
 
+    # --- Onglet Clients : actions -----------------------------------------------------
+
+    def _client_selectionne(self) -> str | None:
+        selection = self.tableau_clients.selection()
+        if not selection:
+            return None
+        return self.tableau_clients.item(selection[0], "values")[0]
+
+    def _facture_client_selectionnee(self) -> Path | None:
+        client = self._client_selectionne()
+        selection = self.tableau_factures_client.selection()
+        if not client or not selection:
+            messagebox.showinfo(TITRE, "Sélectionnez un client (à gauche) "
+                                       "puis une facture (à droite).")
+            return None
+        nom = self.tableau_factures_client.item(selection[0], "values")[0]
+        return config_locale()["dossier_base"] / client / nom
+
+    def _lister_factures_client(self) -> None:
+        self.tableau_factures_client.delete(
+            *self.tableau_factures_client.get_children())
+        client = self._client_selectionne()
+        if not client:
+            return
+        dossier = config_locale()["dossier_base"] / client
+        if not dossier.exists():
+            return
+        for pdf in sorted(dossier.glob("*.pdf")):
+            self.tableau_factures_client.insert("", "end", values=(
+                pdf.name, f"{pdf.stat().st_size / 1024:.0f} Ko"))
+
+    def _ouvrir_facture_client(self) -> None:
+        chemin = self._facture_client_selectionnee()
+        if chemin and chemin.exists():
+            _ouvrir(chemin)
+
+    def _ouvrir_dossier_client(self) -> None:
+        client = self._client_selectionne()
+        if client:
+            _ouvrir(config_locale()["dossier_base"] / client)
+        else:
+            _ouvrir(config_locale()["dossier_base"])
+
+    def _deplacer_facture(self) -> None:
+        chemin = self._facture_client_selectionnee()
+        if not chemin or not chemin.exists():
+            return
+        config = config_locale()
+        # Cibles proposées : dossiers existants + clients connus + _A_CLASSER.
+        cibles = {d.name for d in config["dossier_base"].iterdir()
+                  if d.is_dir()}
+        cibles |= {moteur.nettoyer_nom_fichier(c) for _v, c in
+                   moteur.charger_clients(config["fichier_clients"])}
+        cibles.add(moteur.DOSSIER_NON_CLASSE)
+        cibles.discard(chemin.parent.name)
+
+        dialogue = tk.Toplevel(self)
+        dialogue.title("Déplacer la facture")
+        dialogue.configure(bg=COULEURS["fond"])
+        dialogue.transient(self)
+        dialogue.grab_set()
+        corps = ttk.Frame(dialogue, padding=16)
+        corps.pack(fill="both", expand=True)
+        ttk.Label(corps, text=f"Déplacer « {chemin.name} »\n"
+                              f"du client « {chemin.parent.name} » vers :"
+                  ).pack(anchor="w", pady=(0, 8))
+        choix = ttk.Combobox(corps, values=sorted(cibles), width=36)
+        choix.pack(fill="x")
+
+        def valider():
+            cible = choix.get().strip()
+            if not cible:
+                return
+            try:
+                moteur.reclasser_facture(config, chemin, cible)
+            except Exception as erreur:  # noqa: BLE001
+                messagebox.showerror(TITRE, f"Déplacement impossible : {erreur}")
+            dialogue.destroy()
+            self.rafraichir_tout()
+
+        boutons = ttk.Frame(corps)
+        boutons.pack(fill="x", pady=(12, 0))
+        ttk.Button(boutons, text="Déplacer", command=valider).pack(side="right")
+        ttk.Button(boutons, text="Annuler",
+                   command=dialogue.destroy).pack(side="right", padx=6)
+        _centrer_sur(dialogue, self)
+
+    # --- Nettoyage des doublons --------------------------------------------------------
+
+    def nettoyer_doublons(self) -> None:
+        if self.traitement_en_cours:
+            return
+        if not messagebox.askyesno(
+                TITRE,
+                "Rechercher les factures en double (contenu identique) dans "
+                "les dossiers clients et supprimer les copies ?\n\n"
+                "Le tableau Excel sera nettoyé en conséquence."):
+            return
+        self._debut_travail("⏳  Nettoyage des doublons...")
+        threading.Thread(target=self._travail_doublons, daemon=True).start()
+
+    def _travail_doublons(self) -> None:
+        try:
+            fichiers, lignes = moteur.supprimer_doublons(config_locale())
+            bilan = (f"Doublons : {fichiers} fichier(s) supprimé(s), "
+                     f"{lignes} ligne(s) Excel retirée(s).")
+        except Exception as erreur:  # noqa: BLE001
+            bilan = f"Nettoyage impossible : {erreur}"
+            self.file_messages.put((logging.ERROR, bilan))
+        self.after(0, self._fin_travail, bilan)
+
     # --- Rafraîchissement des vues ---------------------------------------------------
 
     def rafraichir_tout(self) -> None:
         self.rafraichir_historique()
         self.rafraichir_a_verifier()
+        self.rafraichir_clients()
         self.rafraichir_synthese()
+
+    def rafraichir_clients(self) -> None:
+        """Recharge la liste des dossiers clients (nb factures, total TTC)."""
+        self.tableau_clients.delete(*self.tableau_clients.get_children())
+        base = config_locale()["dossier_base"]
+        if not base.exists():
+            return
+        df = self._lire_excel()
+        totaux = {}
+        if df is not None and not df.empty:
+            df = df.copy()
+            df["_ttc"] = pd.to_numeric(df["Total TTC"], errors="coerce")
+            df["_dossier"] = df["Client"].astype(str).map(
+                moteur.nettoyer_nom_fichier)
+            totaux = df.groupby("_dossier")["_ttc"].sum().to_dict()
+        for dossier in sorted(d for d in base.iterdir() if d.is_dir()):
+            nb = len(list(dossier.glob("*.pdf")))
+            self.tableau_clients.insert("", "end", values=(
+                dossier.name, nb, _euros(totaux.get(dossier.name))))
+        self._lister_factures_client()
 
     def _lire_excel(self) -> pd.DataFrame | None:
         fichier = config_locale()["fichier_excel"]
