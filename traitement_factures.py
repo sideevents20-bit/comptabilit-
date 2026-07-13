@@ -734,9 +734,11 @@ def extraire_montants(texte: str) -> dict:
     if all(v is None for v in resultat["tva"].values()):
         # Le lookahead final rejette un TAUX pris pour un montant :
         # dans "TVA. 20.00 &" (OCR de "TVA 20,00 %"), 20.00 est un taux.
+        # (?!\d) interdit au moteur de regex de tronquer le nombre pour
+        # esquiver ce garde-fou par backtracking ("20.0" + "0 &").
         montant_tva = _dernier_montant(
             r"(?:total\s+|montant\s+)?tva[\s:.]{1,10}" + _MONTANT
-            + r"(?!\s*[%&])", texte
+            + r"(?![.,]?\d|\s*[%&])", texte
         )
         if montant_tva is not None:
             # Sans taux explicite, on le déduit du ratio TVA / HT si possible,
