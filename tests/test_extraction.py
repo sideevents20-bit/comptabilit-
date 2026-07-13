@@ -224,6 +224,61 @@ def test_nettoyer_nom_fichier():
 
 
 # ---------------------------------------------------------------------------
+# Tickets carburant (OCR) : TOT TIC, % lu comme &, Net = HT, MONTANT REEL
+# ---------------------------------------------------------------------------
+
+TICKET_CARBURANT = """STATION INTERMARCHE
+Date 17-06-2026 14:19:45
+Pompe 4 Gasoi 1
+TOT TIC € 19.99
+TVA. 20.00 & € 3,33
+Net € 16.66
+MONTANT REEL
+EUR 19.99
+"""
+
+
+def test_ticket_carburant_ocr():
+    m = extraire_montants(TICKET_CARBURANT)
+    assert m["total_ttc"] == 19.99          # "TOT TIC" = TOT TTC déformé
+    assert m["tva"]["20"] == 3.33           # "%" lu comme "&"
+    assert m["total_ht"] == 16.66           # "Net" nu = HT sur les tickets
+    assert extraire_date_facture(TICKET_CARBURANT) == "2026-06-17"
+
+
+def test_montant_reel_ligne_suivante():
+    texte = "CARREFOUR\nMONTANT REEL\nEUR 104.27\nDEBIT"
+    assert extraire_montants(texte)["total_ttc"] == 104.27
+
+
+def test_taux_jamais_pris_pour_montant():
+    # "TVA. 20.00 &" : 20.00 est un TAUX, pas un montant de TVA.
+    m = extraire_montants("TVA. 20.00 &\nrien d'autre")
+    assert m["tva"] == {"20": None, "10": None, "5.5": None}
+
+
+# ---------------------------------------------------------------------------
+# "TOTAL" nu + chiffre parasite (€ lu comme 6), et avis FPS "est égal :"
+# ---------------------------------------------------------------------------
+
+def test_total_nu_et_chiffre_parasite():
+    texte = ("FACTURE\nDÉSIGNATION MONTANT\nChantier Bazin 450,00\n"
+             "TOTAL 2 250,00 6\nTVA non applicable art 293B")
+    m = extraire_montants(texte)
+    assert m["total_ttc"] == 2250.00        # le "6" parasite est ignoré
+
+
+def test_avis_fps_est_egal():
+    texte = "Le montante au IFRS du'est égal :45 eu"
+    assert extraire_montants(texte)["total_ttc"] == 45.0
+
+
+def test_date_annee_invraisemblable_rejetee():
+    texte = "DATE D'ÉMISSION 17 juin 2028\nDATE DE LIVRAISON 17 juin 2026"
+    assert extraire_date_facture(texte) == "2026-06-17"
+
+
+# ---------------------------------------------------------------------------
 # Doublons : fichiers identiques supprimés, tableau Excel nettoyé
 # ---------------------------------------------------------------------------
 

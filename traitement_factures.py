@@ -526,8 +526,12 @@ def convertir_montant(brut: str) -> float | None:
         return None
 
 
-# Motif générique d'un montant : chiffres, espaces, points, virgules.
-_MONTANT = r"([\d][\d\s  .,]*)"
+# Motif STRICT d'un montant : groupes de milliers ("2 250,00") ou nombre
+# simple ("60000,00", "104.27", "45"), 2 décimales max. La rigueur du
+# format empêche d'avaler les chiffres parasites de l'OCR (ex : le "6"
+# de "2 250,00 6" où le symbole € a été lu comme un chiffre).
+_MONTANT = (r"(\d{1,3}(?:[ \u202f\u00a0.,]\d{3})+(?:[.,]\d{1,2})?"
+            r"|\d+(?:[.,]\d{1,2})?)")
 
 
 def _dernier_montant(motif: str, texte: str) -> float | None:
@@ -702,13 +706,20 @@ def extraire_montants(texte: str) -> dict:
             r"[^\d\n-]{0,20}" + _MONTANT,
             texte,
         )
+    if resultat["total_ht"] is None:
+        # Tickets carburant/caisse : ligne "Net € 86.89" = montant HT
+        # (mais jamais "Net à payer", qui est un TTC).
+        resultat["total_ht"] = _dernier_montant(
+            r"\bnet\b(?!\s*[àa]\s*payer)[ \t_:€]{1,10}" + _MONTANT, texte
+        )
 
     # --- TVA par taux -------------------------------------------------------
     # Exemples couverts : "TVA 20% : 100,00", "TVA (5,5 %) 12.30",
     #                     "Montant TVA 10,00 % 45,00 €"
+    # Le % est parfois lu "&" par l'OCR ("TVA. 20.00 & € 3,33").
     # Dernière occurrence par taux : c'est celle du récapitulatif de TVA.
     for m in re.finditer(
-        r"tva[^\d\n%]{0,15}\(?\s*(20|10|5[.,]5)(?:[.,]0{1,2})?\s*%\s*\)?"
+        r"tva[^\d\n%]{0,15}\(?\s*(20|10|5[.,]5)(?:[.,]0{1,2})?\s*[%&]\s*\)?"
         r"[^\d\n-]{0,20}" + _MONTANT,
         texte, re.IGNORECASE,
     ):
@@ -721,8 +732,11 @@ def extraire_montants(texte: str) -> dict:
     # Seuls espaces / ':' / '.' sont tolérés entre "TVA" et le montant, pour
     # ne jamais capturer un numéro de TVA intracommunautaire ("TVA : FR13...").
     if all(v is None for v in resultat["tva"].values()):
+        # Le lookahead final rejette un TAUX pris pour un montant :
+        # dans "TVA. 20.00 &" (OCR de "TVA 20,00 %"), 20.00 est un taux.
         montant_tva = _dernier_montant(
-            r"(?:total\s+|montant\s+)?tva[\s:.]{1,10}" + _MONTANT, texte
+            r"(?:total\s+|montant\s+)?tva[\s:.]{1,10}" + _MONTANT
+            + r"(?!\s*[%&])", texte
         )
         if montant_tva is not None:
             # Sans taux explicite, on le déduit du ratio TVA / HT si possible,
@@ -738,13 +752,18 @@ def extraire_montants(texte: str) -> dict:
 
     # --- Total TTC ----------------------------------------------------------
     # Cascade de replis, du libellé le plus fiable au moins fiable :
-    #   1. "Total TTC" / "Montant TTC" (dernière occurrence)
-    #   2. "Net à payer" / "Montant dû" / "Somme à payer"
+    #   1. "Total TTC" / "Montant TTC" (dernière occurrence),
+    #      y compris "TOT TIC" (OCR de "TOT TTC" sur tickets carburant)
+    #   2. "Net à payer" / "Montant dû" / "Somme à payer" / "Montant total"
+    #      / "Montant réel" (montant parfois à la ligne suivante : tickets CB)
+    #      / "montant ... est égal : 45" (avis amendes/FPS)
     #   3. "TTC" seul (ex : ticket "Client: 03092 TTC : 1 967,18")
-    #   4. Montants seuls sur leur ligne (colonne de totaux sans libellés,
+    #   4. "TOTAL" nu en début de ligne (ex : "TOTAL 2 250,00")
+    #   5. Montants seuls sur leur ligne (colonne de totaux sans libellés,
     #      fréquent sur les PDF passés à l'OCR) : on prend le plus grand.
     resultat["total_ttc"] = _dernier_montant(
-        r"(?:total\s*t\.?t\.?c\.?|montant\s*t\.?t\.?c\.?)[^\d\n-]{0,20}" + _MONTANT,
+        r"(?:total\s*t\.?t\.?c\.?|montant\s*t\.?t\.?c\.?|tot\.?\s+t[ti]c)"
+        r"[^\d\n-]{0,20}" + _MONTANT,
         texte,
     )
     if resultat["total_ttc"] is None:
@@ -752,7 +771,10 @@ def extraire_montants(texte: str) -> dict:
             r"(?:net\s+[àa]\s+payer|total\s+[àa]\s+payer|montant\s+d[ûu]"
             r"|somme\s+[àa]\s+payer|carte\s*-?\s*bancaire"
             r"|montant\s+total(?:\s*\(\s*EUR\s*\))?|montant\s+[àa]\s+payer"
-            r"|montant\s+de\s+la\s+transaction)[^\d\n-]{0,20}" + _MONTANT,
+            r"|montant\s+de\s+la\s+transaction"
+            r"|montant\s+r[ée]el\s*\n?\s*(?:EUR|€)?"
+            r"|montante?\b[^\n]{0,40}?[ée]gale?\s*:?)"
+            r"[^\d\n-]{0,20}" + _MONTANT,
             texte,
         )
     if resultat["total_ttc"] is None:
@@ -760,6 +782,13 @@ def extraire_montants(texte: str) -> dict:
         # (l'OCR sépare souvent libellés et montants en colonnes distinctes).
         resultat["total_ttc"] = _dernier_montant(
             r"\bt\.?t\.?c\.?\b[ \t:.]{1,10}" + _MONTANT, texte
+        )
+    if resultat["total_ttc"] is None:
+        # "TOTAL" nu en début de ligne, en excluant Total HT/TVA/général...
+        resultat["total_ttc"] = _dernier_montant(
+            r"(?m)^\s*total(?!\s*(?:h\.?t|hors|tva|g[ée]n[ée]ral|des|remise))"
+            r"[ \t:€]{1,10}" + _MONTANT,
+            texte,
         )
     if resultat["total_ttc"] is None:
         resultat["total_ttc"] = _plus_grand_montant_isole(texte)
