@@ -718,8 +718,10 @@ def extraire_montants(texte: str) -> dict:
     #                     "Montant TVA 10,00 % 45,00 €"
     # Le % est parfois lu "&" par l'OCR ("TVA. 20.00 & € 3,33").
     # Dernière occurrence par taux : c'est celle du récapitulatif de TVA.
+    # [ \t] uniquement (jamais \n) : le montant d'un taux doit être sur la
+    # MÊME ligne que lui, sinon on volerait le montant de la ligne suivante.
     for m in re.finditer(
-        r"tva[^\d\n%]{0,15}\(?\s*(20|10|5[.,]5)(?:[.,]0{1,2})?\s*[%&]\s*\)?"
+        r"tva[^\d\n%]{0,15}\(?[ \t]*(20|10|5[.,]5)(?:[.,]0{1,2})?[ \t]*[%&][ \t]*\)?"
         r"[^\d\n-]{0,20}" + _MONTANT,
         texte, re.IGNORECASE,
     ):
@@ -795,15 +797,108 @@ def extraire_montants(texte: str) -> dict:
     if resultat["total_ttc"] is None:
         resultat["total_ttc"] = _plus_grand_montant_isole(texte)
 
-    # --- Contrôle de cohérence HT + TVA = TTC (simple avertissement) --------
+    # --- Complétion et vérification arithmétique HT / TVA / TTC -------------
+    return _completer_montants(resultat, texte)
+
+
+TAUX_STANDARD = {"20": 0.20, "10": 0.10, "5.5": 0.055}
+
+
+def _taux_mentionnes(texte: str) -> set[str]:
+    """Taux de TVA affichés dans le document (ex : 'TVA 20 %'), même quand
+    les montants eux-mêmes sont illisibles."""
+    taux = set()
+    for m in re.finditer(r"\b(20|10|5[.,]5)(?:[.,]0{1,2})?\s*[%&]", texte):
+        taux.add(m.group(1).replace(",", "."))
+    return taux
+
+
+def _mention_exoneration(texte: str) -> bool:
+    """Facture sans TVA : franchise 293 B, exonération, autoliquidation..."""
+    return bool(re.search(
+        r"(?i)tva\s+non\s+applicable|art(?:icle|\.)?\s*293\s*.?B"
+        r"|non\s+assujett|exon[ée]r[ée]|autoliquidation", texte))
+
+
+def _completer_montants(resultat: dict, texte: str) -> dict:
+    """
+    Rend le triplet HT / TVA / TTC arithmétiquement cohérent (±0,05 €),
+    à la manière des formules du classeur TVA officiel :
+
+      - TTC seul + un taux unique affiché  -> HT = TTC/(1+taux), TVA déduite
+      - TTC seul + mention d'exonération   -> HT = TTC, pas de TVA
+      - TTC + TVA connus, HT absent        -> HT = TTC - TVA
+      - tout connu mais incohérent (taux unique) -> la valeur qui contredit
+        le taux est recalculée à partir du TTC (référence la plus fiable)
+    """
     ht, ttc = resultat["total_ht"], resultat["total_ttc"]
-    total_tva = sum(v for v in resultat["tva"].values() if v is not None)
-    if ht is not None and ttc is not None and total_tva:
-        if abs((ht + total_tva) - ttc) > 0.05:
+    tvas = resultat["tva"]
+    tva_connues = {t: v for t, v in tvas.items() if v is not None}
+    total_tva = sum(tva_connues.values())
+
+    if ttc is None:
+        return resultat
+
+    # 1. Seul le TTC est lisible : on s'appuie sur le taux affiché.
+    if not tva_connues and ht is None:
+        if _mention_exoneration(texte):
+            resultat["total_ht"] = round(ttc, 2)
+            logger.info("TVA non applicable détectée : HT = TTC.")
+            return resultat
+        taux = _taux_mentionnes(texte)
+        if len(taux) == 1:
+            cle = taux.pop()
+            ht_calcule = round(ttc / (1 + TAUX_STANDARD[cle]), 2)
+            resultat["total_ht"] = ht_calcule
+            tvas[cle] = round(ttc - ht_calcule, 2)
+            logger.info(
+                "Taux %s %% affiché sans montants lisibles : "
+                "HT (%.2f) et TVA (%.2f) déduits du TTC.",
+                cle, ht_calcule, tvas[cle])
+        return resultat
+
+    # 2. TTC + TVA connus mais HT absent.
+    if tva_connues and ht is None:
+        ht_calcule = round(ttc - total_tva, 2)
+        if ht_calcule > 0:
+            resultat["total_ht"] = ht_calcule
+        else:  # TVA extraite manifestement fausse : on l'abandonne.
+            for cle in tva_connues:
+                tvas[cle] = None
+            logger.warning("TVA extraite (%.2f) incompatible avec le TTC "
+                           "(%.2f) : ignorée.", total_tva, ttc)
+        return resultat
+
+    # 3. Tout est connu : contrôle, et réparation si un seul taux en jeu.
+    if ht is not None and tva_connues and abs((ht + total_tva) - ttc) > 0.05:
+        if len(tva_connues) == 1:
+            (cle, tva_lue), = tva_connues.items()
+            taux = TAUX_STANDARD[cle]
+            tva_attendue = round(ttc - ttc / (1 + taux), 2)
+            if abs(tva_lue - tva_attendue) <= 0.05:
+                # La TVA colle au TTC : c'est le HT qui était mal lu.
+                resultat["total_ht"] = round(ttc - tva_lue, 2)
+                logger.warning("HT incohérent corrigé : %.2f -> %.2f.",
+                               ht, resultat["total_ht"])
+            elif abs(ht * (1 + taux) - ttc) <= 0.05:
+                # Le HT colle au TTC : c'est la TVA qui était mal lue.
+                tvas[cle] = round(ttc - ht, 2)
+                logger.warning("TVA %s %% incohérente corrigée : %.2f -> %.2f.",
+                               cle, tva_lue, tvas[cle])
+            else:
+                # Ni l'un ni l'autre : on recalcule les deux depuis le TTC
+                # et le taux affiché, référence la plus fiable.
+                resultat["total_ht"] = round(ttc / (1 + taux), 2)
+                tvas[cle] = round(ttc - resultat["total_ht"], 2)
+                logger.warning(
+                    "HT (%.2f) et TVA (%.2f) incohérents avec le TTC (%.2f) : "
+                    "recalculés au taux de %s %%.", ht, tva_lue, ttc, cle)
+        else:
             logger.warning(
-                "Incohérence détectée : HT (%.2f) + TVA (%.2f) != TTC (%.2f).",
-                ht, total_tva, ttc,
-            )
+                "Incohérence détectée : HT (%.2f) + TVA (%.2f) != TTC (%.2f) "
+                "— plusieurs taux en jeu, non corrigé automatiquement.",
+                ht, total_tva, ttc)
+    return resultat
 
     return resultat
 
@@ -1048,6 +1143,81 @@ def reclasser_facture(config: dict, chemin_actuel: Path,
     logger.info("Facture reclassée : %s -> %s", chemin_actuel.name,
                 destination)
     return destination
+
+
+def recalculer_montants_tableau(config: dict) -> tuple[int, int, int]:
+    """
+    Répare les lignes du tableau global dont le triplet HT/TVA/TTC est
+    incomplet ou incohérent, en RELISANT les PDF classés avec le moteur
+    d'extraction courant (complétion arithmétique incluse).
+
+    Le TTC existant sert de référence : seules les colonnes HT et TVA
+    sont mises à jour. Retourne (corrigées, déjà_cohérentes, illisibles).
+    """
+    excel = config["fichier_excel"]
+    if not excel.exists():
+        return 0, 0, 0
+    df = pd.read_excel(excel)
+
+    def _nombre(valeur):
+        v = pd.to_numeric(valeur, errors="coerce")
+        return None if pd.isna(v) else round(float(v), 2)
+
+    corrigees = coherentes = illisibles = 0
+    for indice, ligne in df.iterrows():
+        ttc = _nombre(ligne.get("Total TTC"))
+        ht = _nombre(ligne.get("Total HT"))
+        tvas = {t: _nombre(ligne.get(f"TVA {t}%".replace("5.5", "5.5")))
+                for t in ("20", "10", "5.5")}
+        total_tva = sum(v for v in tvas.values() if v is not None)
+        if ttc is None:
+            illisibles += 1
+            continue
+        if ht is not None and abs((ht + total_tva) - ttc) <= 0.05:
+            coherentes += 1
+            continue
+
+        pdf = (config["dossier_base"]
+               / nettoyer_nom_fichier(str(ligne.get("Client", "")))
+               / str(ligne.get("Nom du fichier", "")))
+        if not pdf.exists():
+            illisibles += 1
+            continue
+        try:
+            texte = extraire_texte_pdf(pdf)
+            montants = {"total_ht": None,
+                        "tva": {"20": None, "10": None, "5.5": None},
+                        "total_ttc": ttc}  # le TTC validé reste la référence
+            extrait = extraire_montants(texte)
+            montants["total_ht"] = extrait["total_ht"]
+            montants["tva"] = extrait["tva"]
+            _completer_montants(montants, texte)
+        except Exception as erreur:  # noqa: BLE001
+            logger.warning("Recalcul impossible pour %s : %s", pdf.name, erreur)
+            illisibles += 1
+            continue
+
+        nouveau_ht = montants["total_ht"]
+        nouvelle_tva = sum(v for v in montants["tva"].values() if v is not None)
+        if nouveau_ht is not None and abs((nouveau_ht + nouvelle_tva) - ttc) <= 0.05:
+            df.at[indice, "Total HT"] = nouveau_ht
+            df.at[indice, "TVA 20%"] = montants["tva"]["20"]
+            df.at[indice, "TVA 10%"] = montants["tva"]["10"]
+            df.at[indice, "TVA 5.5%"] = montants["tva"]["5.5"]
+            corrigees += 1
+            logger.info("♻ %s : HT/TVA complétés (HT=%.2f, TVA=%.2f).",
+                        ligne.get("Nom du fichier"), nouveau_ht, nouvelle_tva)
+        else:
+            illisibles += 1
+            logger.warning("♻ %s : montants toujours incomplets après "
+                           "relecture — à compléter manuellement.",
+                           ligne.get("Nom du fichier"))
+
+    if corrigees:
+        df.reindex(columns=COLONNES_EXCEL).to_excel(excel, index=False)
+    logger.info("Recalcul du tableau : %d corrigée(s), %d cohérente(s), "
+                "%d à voir manuellement.", corrigees, coherentes, illisibles)
+    return corrigees, coherentes, illisibles
 
 
 # ---------------------------------------------------------------------------

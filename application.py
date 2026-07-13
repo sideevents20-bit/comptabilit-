@@ -900,6 +900,8 @@ class ApplicationFactures(tk.Tk):
                   ).pack(side="left")
         ttk.Button(barre, text="📤 Générer le classeur TVA du mois...",
                    command=self.exporter_classeur_tva).pack(side="right")
+        ttk.Button(barre, text="🔁 Compléter HT/TVA manquants",
+                   command=self.recalculer_montants).pack(side="right", padx=6)
 
         colonnes = ("mois", "nb", "ht", "tva20", "tva10", "tva55",
                     "tva_totale", "ttc")
@@ -1304,6 +1306,34 @@ class ApplicationFactures(tk.Tk):
         ttk.Button(boutons, text="Fermer",
                    command=dialogue.destroy).pack(side="right", padx=6)
         _centrer_sur(dialogue, self)
+
+    # --- Recalcul HT/TVA des lignes incomplètes ------------------------------------------
+
+    def recalculer_montants(self) -> None:
+        """Relit les PDF classés pour compléter les HT/TVA manquants."""
+        if self.traitement_en_cours:
+            return
+        if not messagebox.askyesno(
+                TITRE,
+                "Relire les factures classées pour compléter les colonnes "
+                "HT et TVA manquantes ou incohérentes ?\n\n"
+                "Le TTC de chaque ligne reste inchangé (valeur de référence). "
+                "L'opération peut prendre quelques minutes (relecture OCR)."):
+            return
+        self._debut_travail("⏳  Recalcul HT/TVA...")
+        threading.Thread(target=self._travail_recalcul, daemon=True).start()
+
+    def _travail_recalcul(self) -> None:
+        try:
+            corrigees, coherentes, restantes = \
+                moteur.recalculer_montants_tableau(config_locale())
+            bilan = (f"Recalcul terminé : {corrigees} ligne(s) complétée(s), "
+                     f"{coherentes} déjà cohérente(s), {restantes} à compléter "
+                     "manuellement.")
+        except Exception as erreur:  # noqa: BLE001
+            bilan = f"Recalcul impossible : {erreur}"
+            self.file_messages.put((logging.ERROR, bilan))
+        self.after(0, self._fin_travail, bilan)
 
     # --- Nettoyage des doublons --------------------------------------------------------
 

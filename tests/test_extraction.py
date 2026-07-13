@@ -279,6 +279,52 @@ def test_date_annee_invraisemblable_rejetee():
 
 
 # ---------------------------------------------------------------------------
+# Complétion arithmétique HT / TVA / TTC (lecture « méticuleuse » de la TVA)
+# ---------------------------------------------------------------------------
+
+def test_ttc_seul_avec_taux_affiche():
+    # Montants illisibles mais taux affiché : HT et TVA déduits du TTC.
+    texte = "Prestations diverses\nTVA 20 %\nNet à payer 1 200,00 €"
+    m = extraire_montants(texte)
+    assert m["total_ttc"] == 1200.00
+    assert m["total_ht"] == 1000.00
+    assert m["tva"]["20"] == 200.00
+
+
+def test_ttc_seul_avec_taux_10():
+    m = extraire_montants("TVA 10 %\nNet à payer 110,00 €")
+    assert m["total_ht"] == 100.00 and m["tva"]["10"] == 10.00
+
+
+def test_ttc_seul_exoneration():
+    texte = "TOTAL 2 250,00\nTVA non applicable art 293B du CGI"
+    m = extraire_montants(texte)
+    assert m["total_ttc"] == 2250.00 and m["total_ht"] == 2250.00
+    assert m["tva"] == {"20": None, "10": None, "5.5": None}
+
+
+def test_ht_deduit_de_ttc_et_tva():
+    m = extraire_montants("TVA 20 % : 17,38\nMontant dû : 104,27")
+    assert m["total_ht"] == 86.89
+
+
+def test_tva_incoherente_recalculee():
+    # TVA lue 2 000 (erreur OCR) alors que HT 600 et TTC 720 concordent
+    # au taux de 20 % : la TVA est recalculée.
+    texte = "Total HT 600,00\nTVA 20 % 2 000,00\nTotal TTC 720,00"
+    m = extraire_montants(texte)
+    assert m["tva"]["20"] == 120.00
+    assert m["total_ht"] == 600.00 and m["total_ttc"] == 720.00
+
+
+def test_ht_incoherent_recalcule():
+    # HT mal lu (6 000) mais TVA cohérente avec le TTC : HT corrigé.
+    texte = "Total HT 6 000,00\nTVA 20 % 120,00\nTotal TTC 720,00"
+    m = extraire_montants(texte)
+    assert m["total_ht"] == 600.00
+
+
+# ---------------------------------------------------------------------------
 # Doublons : fichiers identiques supprimés, tableau Excel nettoyé
 # ---------------------------------------------------------------------------
 
