@@ -134,6 +134,10 @@ TUTORIEL = [
     ("titre", "3. L'onglet « Factures traitées »"),
     ("puce", "•  Tapez dans le champ 🔍 pour filtrer par client, fournisseur "
              "ou nom de fichier."),
+    ("puce", "•  Le menu déroulant à côté filtre par type : Achats "
+             "(factures de vos fournisseurs) ou Ventes (factures émises par "
+             "vos clients) — la colonne Type l'affiche aussi ligne par "
+             "ligne."),
     ("puce", "•  Cliquez sur l'en-tête d'une colonne pour trier (un second "
              "clic inverse l'ordre) — valable dans tous les tableaux de "
              "l'application."),
@@ -746,18 +750,27 @@ class ApplicationFactures(tk.Tk):
         self.recherche = tk.StringVar()
         self.recherche.trace_add("write",
                                  lambda *_a: self.rafraichir_historique())
-        ttk.Entry(barre, textvariable=self.recherche, width=32).pack(
+        ttk.Entry(barre, textvariable=self.recherche, width=26).pack(
             side="left", padx=6)
-        ttk.Label(barre, text="(double-clic sur une ligne : ouvrir la facture)",
+        # Filtre achats (fournisseurs) / ventes (clients).
+        self.filtre_type = ttk.Combobox(
+            barre, state="readonly", width=20,
+            values=("Toutes les factures", "Achats (fournisseurs)",
+                    "Ventes (clients)"))
+        self.filtre_type.current(0)
+        self.filtre_type.bind("<<ComboboxSelected>>",
+                              lambda _e: self.rafraichir_historique())
+        self.filtre_type.pack(side="left", padx=4)
+        ttk.Label(barre, text="(double-clic : ouvrir la facture)",
                   style="Info.TLabel").pack(side="left", padx=4)
         self.label_synthese = ttk.Label(barre, text="", style="Info.TLabel")
         self.label_synthese.pack(side="right")
 
-        colonnes = ("date_facture", "client", "fournisseur", "ht",
+        colonnes = ("date_facture", "type", "client", "fournisseur", "ht",
                     "tva20", "tva10", "tva55", "ttc", "fichier")
-        entetes = ("Date facture", "Client", "Fournisseur", "Total HT",
+        entetes = ("Date facture", "Type", "Client", "Fournisseur", "Total HT",
                    "TVA 20%", "TVA 10%", "TVA 5.5%", "Total TTC", "Fichier")
-        largeurs = (92, 120, 165, 88, 78, 78, 78, 92, 250)
+        largeurs = (90, 58, 105, 150, 85, 75, 75, 75, 90, 230)
 
         self.tableau = ttk.Treeview(cadre, columns=colonnes, show="headings")
         for colonne, entete, largeur in zip(colonnes, entetes, largeurs):
@@ -1362,6 +1375,21 @@ class ApplicationFactures(tk.Tk):
             self.label_synthese.config(text="Aucune facture traitée pour le moment.")
             return
 
+        import export_tva
+
+        # Type de chaque facture : Vente si l'émetteur est le client
+        # lui-même, Achat sinon (même règle que l'export TVA).
+        df = df.copy()
+        df["_type"] = df.apply(
+            lambda ligne: "Vente" if export_tva.est_vente(ligne) else "Achat",
+            axis=1)
+
+        choix_type = self.filtre_type.get()
+        if choix_type.startswith("Achats"):
+            df = df[df["_type"] == "Achat"]
+        elif choix_type.startswith("Ventes"):
+            df = df[df["_type"] == "Vente"]
+
         filtre = self.recherche.get().strip().lower()
         if filtre:
             masque = (
@@ -1378,6 +1406,7 @@ class ApplicationFactures(tk.Tk):
                                 tags=("paire",) if indice % 2 else (),
                                 values=(
                 ligne.get("Date de facture", ""),
+                ligne.get("_type", ""),
                 ligne.get("Client", ""),
                 ligne.get("Fournisseur", ""),
                 _euros(ligne.get("Total HT")),
@@ -1453,7 +1482,7 @@ class ApplicationFactures(tk.Tk):
         if not selection:
             return
         valeurs = self.tableau.item(selection[0], "values")
-        client, fichier = valeurs[1], valeurs[8]
+        client, fichier = valeurs[2], valeurs[9]
         if not fichier:
             return
         chemin = (config_locale()["dossier_base"]

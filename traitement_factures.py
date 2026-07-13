@@ -154,12 +154,14 @@ COLONNES_EXCEL = [
     "Total TTC",
 ]
 
-# Mois français -> numéro, pour les dates écrites en toutes lettres.
+# Mois français -> numéro, pour les dates écrites en toutes lettres
+# (y compris les abréviations et déformations OCR courantes : "jun"...).
 MOIS_FR = {
-    "janvier": 1, "fevrier": 2, "février": 2, "mars": 3, "avril": 4,
-    "mai": 5, "juin": 6, "juillet": 7, "aout": 8, "août": 8,
-    "septembre": 9, "octobre": 10, "novembre": 11, "decembre": 12,
-    "décembre": 12,
+    "janvier": 1, "janv": 1, "fevrier": 2, "février": 2, "fevr": 2,
+    "mars": 3, "avril": 4, "avr": 4, "mai": 5, "juin": 6, "jun": 6,
+    "juillet": 7, "juil": 7, "aout": 8, "août": 8, "septembre": 9,
+    "sept": 9, "octobre": 10, "oct": 10, "novembre": 11, "nov": 11,
+    "decembre": 12, "décembre": 12, "dec": 12,
 }
 
 
@@ -442,23 +444,43 @@ def ocr_pdf(chemin_pdf: Path, dpi: int = 300) -> str:
     """
     import tempfile
 
+    from PIL import ImageFilter, ImageOps
+
+    def _ocr_image(image, dossier, nom):
+        chemin_image = os.path.join(dossier, nom)
+        image.save(chemin_image)
+        resultat = _executer_tesseract(
+            [chemin_image, "stdout", "-l", LANGUE_OCR, "--dpi", str(dpi)])
+        if resultat.returncode != 0:
+            raise ValueError(
+                "Tesseract a échoué : "
+                + resultat.stderr.decode(errors="replace")[:300]
+            )
+        return resultat.stdout.decode("utf-8", errors="replace")
+
     texte = []
     document = pdfium.PdfDocument(str(chemin_pdf))
     try:
         with tempfile.TemporaryDirectory() as dossier:
             for numero, page in enumerate(document):
                 image = page.render(scale=dpi / 72).to_pil()
-                chemin_image = os.path.join(dossier, f"page_{numero}.png")
-                image.save(chemin_image)
-                resultat = _executer_tesseract(
-                    [chemin_image, "stdout", "-l", LANGUE_OCR,
-                     "--dpi", str(dpi)])
-                if resultat.returncode != 0:
-                    raise ValueError(
-                        "Tesseract a échoué : "
-                        + resultat.stderr.decode(errors="replace")[:300]
-                    )
-                texte.append(resultat.stdout.decode("utf-8", errors="replace"))
+                # Prétraitement léger, sans risque : niveaux de gris +
+                # renforcement du contraste (photos de factures pâles).
+                image = ImageOps.autocontrast(ImageOps.grayscale(image),
+                                              cutoff=2)
+                lu = _ocr_image(image, dossier, f"page_{numero}.png")
+
+                # Page presque illisible ? Seconde passe renforcée
+                # (agrandissement x2 + netteté), on garde la meilleure.
+                if len(lu.strip()) < 300:
+                    agrandie = image.resize(
+                        (image.width * 2, image.height * 2),
+                    ).filter(ImageFilter.SHARPEN)
+                    relu = _ocr_image(agrandie, dossier,
+                                      f"page_{numero}_x2.png")
+                    if len(relu.strip()) > len(lu.strip()):
+                        lu = relu
+                texte.append(lu)
     finally:
         document.close()
     return "\n".join(texte)
@@ -564,25 +586,27 @@ def extraire_date_facture(texte: str) -> str | None:
     date_lettres = r"(\d{1,2})(?:er)?\s+([a-zéèûôî]+)\s+(\d{4})"
 
     # 1) Date explicitement libellée (prioritaire, évite les dates d'échéance).
+    # On essaie TOUTES les occurrences : la première peut être illisible
+    # (OCR) sans que les suivantes le soient.
     libelles = (
-        r"(?:date\s+(?:de\s+(?:la\s+)?)?(?:facture|facturation|émission|emission)"
+        r"(?:date\s+(?:d[e'’]\s*(?:la\s+)?)?"
+        r"(?:facture|facturation|émission|emission|transaction)"
         r"|facture\s+du|émise?\s+le|emise?\s+le|le)\s*:?\s*"
     )
     for motif in (libelles + date_num, libelles + date_lettres):
-        m = re.search(motif, texte, re.IGNORECASE)
-        if m:
+        for m in re.finditer(motif, texte, re.IGNORECASE):
             date = _construire_date(m.groups())
             if date:
                 return date
 
-    # 2) Repli : première date trouvée dans le document.
-    m = re.search(date_iso, texte)
-    if m:
+    # 2) Repli : première date valide trouvée dans le document.
+    for m in re.finditer(date_iso, texte):
         annee, mois, jour = m.groups()
-        return _construire_date((jour, mois, annee))
+        date = _construire_date((jour, mois, annee))
+        if date:
+            return date
     for motif in (date_num, date_lettres):
-        m = re.search(motif, texte, re.IGNORECASE)
-        if m:
+        for m in re.finditer(motif, texte, re.IGNORECASE):
             date = _construire_date(m.groups())
             if date:
                 return date
@@ -590,7 +614,14 @@ def extraire_date_facture(texte: str) -> str | None:
 
 
 def _construire_date(groupes: tuple) -> str | None:
-    """Valide un triplet (jour, mois, année) et le formate en YYYY-MM-DD."""
+    """
+    Valide un triplet (jour, mois, année) et le formate en YYYY-MM-DD.
+
+    Garde-fou de vraisemblance : une facture datée d'avant 2000 ou
+    d'après l'année prochaine est un artefact d'OCR (ex : "2028" lu au
+    lieu de "2026") — on la rejette pour laisser sa chance à la date
+    suivante du document.
+    """
     jour_s, mois_s, annee_s = groupes
     try:
         mois = MOIS_FR.get(normaliser(mois_s)) if not mois_s.isdigit() else int(mois_s)
@@ -599,6 +630,8 @@ def _construire_date(groupes: tuple) -> str | None:
         jour, annee = int(jour_s), int(annee_s)
         if annee < 100:  # année sur 2 chiffres : "25" -> 2025
             annee += 2000
+        if not 2000 <= annee <= datetime.now().year + 1:
+            return None
         return datetime(annee, mois, jour).strftime("%Y-%m-%d")
     except (ValueError, TypeError):
         return None
@@ -665,7 +698,8 @@ def extraire_montants(texte: str) -> dict:
     )
     if resultat["total_ht"] is None:
         resultat["total_ht"] = _dernier_montant(
-            r"(?:montant\s*h\.?t\.?|total\s+hors\s+taxes?)[^\d\n-]{0,20}" + _MONTANT,
+            r"(?:montant\s*h\.?t\.?|(?:total|montant)\s+hors\s+taxes?)"
+            r"[^\d\n-]{0,20}" + _MONTANT,
             texte,
         )
 
@@ -716,7 +750,9 @@ def extraire_montants(texte: str) -> dict:
     if resultat["total_ttc"] is None:
         resultat["total_ttc"] = _dernier_montant(
             r"(?:net\s+[àa]\s+payer|total\s+[àa]\s+payer|montant\s+d[ûu]"
-            r"|somme\s+[àa]\s+payer|carte\s*-?\s*bancaire)[^\d\n-]{0,20}" + _MONTANT,
+            r"|somme\s+[àa]\s+payer|carte\s*-?\s*bancaire"
+            r"|montant\s+total(?:\s*\(\s*EUR\s*\))?|montant\s+[àa]\s+payer"
+            r"|montant\s+de\s+la\s+transaction)[^\d\n-]{0,20}" + _MONTANT,
             texte,
         )
     if resultat["total_ttc"] is None:
