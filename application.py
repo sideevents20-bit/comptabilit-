@@ -130,6 +130,11 @@ TUTORIEL = [
              "contenu identique à une facture déjà classée est ignorée (pas "
              "de double ligne dans le tableau). Le bouton 🧹 Doublons "
              "nettoie en plus les doublons déjà présents."),
+    ("puce", "•  Les RELEVÉS BANCAIRES sont reconnus automatiquement : ils "
+             "sont classés dans le sous-dossier Releves_bancaires du client "
+             "et chaque opération (date, libellé, débit, crédit) est ajoutée "
+             "au fichier releves_bancaires.xlsx (bouton 🏦 de l'onglet "
+             "Clients) — jamais au tableau de TVA."),
 
     ("titre", "3. L'onglet « Factures traitées »"),
     ("puce", "•  Tapez dans le champ 🔍 pour filtrer par client, fournisseur "
@@ -842,6 +847,9 @@ class ApplicationFactures(tk.Tk):
                    command=self._ouvrir_dossier_client).pack(side="left")
         ttk.Button(boutons, text="🧹 Supprimer les doublons",
                    command=self.nettoyer_doublons).pack(side="right")
+        ttk.Button(boutons, text="🏦 Relevés bancaires",
+                   command=lambda: _ouvrir(config_locale()["fichier_releves"])
+                   ).pack(side="right", padx=6)
         ttk.Label(boutons, text="(cliquez sur les en-têtes pour trier)",
                   style="Info.TLabel").pack(side="right", padx=8)
 

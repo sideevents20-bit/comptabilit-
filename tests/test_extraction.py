@@ -325,6 +325,83 @@ def test_ht_incoherent_recalcule():
 
 
 # ---------------------------------------------------------------------------
+# Relevés bancaires : détection, extraction des opérations, hors TVA
+# ---------------------------------------------------------------------------
+
+RELEVE_BANCAIRE = """Relevés de compte
+Du 01/06/2026 au 30/06/2026
+DEMO TRANSPORTS
+Solde au 01/06 + 1000.00 EUR
+Entrées + 1500.00 EUR
+Sorties - 400.00 EUR
+IBAN: FR7699999000012465360596377
+BIC: DEMOFRP1XXX Solde au 30/06 + 2100.00 EUR
+Date de valeur Transactions Débit Crédit
+01/06 CLIENT HEUREUX + 1500.00 EUR
+Virement
+02/06 PEAGE AUTOROUTE - 2.70 EUR
+Carte **0000
+02/06 PEAGE AUTOROUTE - 2.70 EUR
+Carte **0000
+03/06 FOURNISSEUR MACHIN - 394.60 EUR
+Facture 42
+Du 01/06/2026 au 30/06/2026
+DEMO TRANSPORTS (FR76 9999 9000 0124 6536 0596 377) 1/1
+"""
+
+
+def test_detection_releve_bancaire():
+    assert moteur.est_releve_bancaire(RELEVE_BANCAIRE)
+    assert not moteur.est_releve_bancaire(FACTURE_STANDARD)
+
+
+def test_extraction_operations_releve():
+    infos = moteur.extraire_operations_releve(RELEVE_BANCAIRE)
+    assert infos["periode_debut"] == "2026-06-01"
+    assert infos["periode_fin"] == "2026-06-30"
+    assert infos["iban"] == "FR7699999000012465360596377"
+    assert infos["solde_initial"] == 1000.00
+    assert infos["solde_final"] == 2100.00
+    operations = infos["operations"]
+    # Les deux péages identiques sont DEUX opérations distinctes.
+    assert len(operations) == 4
+    assert sum(o["debit"] or 0 for o in operations) == 400.00
+    assert sum(o["credit"] or 0 for o in operations) == 1500.00
+    assert operations[0]["libelle"] == "CLIENT HEUREUX"
+    assert operations[0]["detail"] == "Virement"
+    assert operations[3]["detail"] == "Facture 42"
+
+
+def test_releve_classe_hors_tva():
+    import pandas as pd
+
+    with tempfile.TemporaryDirectory() as dossier:
+        bac = Path(dossier)
+        config = {"dossier_base": bac / "Factures_Clients",
+                  "dossier_temp": bac / "_temp",
+                  "fichier_excel": bac / "tva.xlsx",
+                  "fichier_releves": bac / "releves.xlsx"}
+        clients = [("DEMO TRANSPORTS", "DEMO TRANSPORTS")]
+        (bac / "_temp").mkdir()
+        pdf = bac / "_temp" / "releve.pdf"
+        pdf.write_bytes(b"factice")
+
+        destination = moteur.traiter_releve(pdf, RELEVE_BANCAIRE, config,
+                                            clients)
+        assert destination.parent.name == "Releves_bancaires"
+        assert "DEMO_TRANSPORTS" in str(destination)
+        assert not (bac / "tva.xlsx").exists()      # jamais dans la TVA
+        df = pd.read_excel(config["fichier_releves"])
+        assert len(df) == 4
+
+        # Réimport du même relevé : remplacement, pas d'accumulation.
+        pdf2 = bac / "_temp" / "releve2.pdf"
+        pdf2.write_bytes(b"factice2")
+        moteur.traiter_releve(pdf2, RELEVE_BANCAIRE, config, clients)
+        assert len(pd.read_excel(config["fichier_releves"])) == 4
+
+
+# ---------------------------------------------------------------------------
 # Doublons : fichiers identiques supprimés, tableau Excel nettoyé
 # ---------------------------------------------------------------------------
 

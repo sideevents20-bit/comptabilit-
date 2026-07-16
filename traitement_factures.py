@@ -212,6 +212,9 @@ def charger_configuration(exiger_imap: bool = True) -> dict:
         # Export mensuel vers le classeur TVA officiel (modèle à formules).
         "modele_tva": Path(os.getenv("MODELE_TVA", "./modele_tva.xlsx")),
         "dossier_exports": Path(os.getenv("DOSSIER_EXPORTS", "./Exports_TVA")),
+        # Opérations extraites des relevés bancaires.
+        "fichier_releves": Path(os.getenv("FICHIER_RELEVES",
+                                          "./releves_bancaires.xlsx")),
         "mots_cles": [
             m.strip().lower()
             for m in os.getenv("MOTS_CLES_OBJET", "facture,invoice").split(",")
@@ -903,14 +906,17 @@ def _completer_montants(resultat: dict, texte: str) -> dict:
     return resultat
 
 
-def analyser_facture(chemin_pdf: Path, clients: list[str], expediteur: str) -> dict:
+def analyser_facture(chemin_pdf: Path, clients: list[str], expediteur: str,
+                     texte: str | None = None) -> dict:
     """
     Analyse complète d'un PDF de facture.
 
     Retourne un dictionnaire avec toutes les données extraites. Lève une
     ValueError si les données minimales (montant TTC) sont introuvables.
+    Le texte peut être fourni s'il a déjà été extrait (évite un second OCR).
     """
-    texte = extraire_texte_pdf(chemin_pdf)
+    if texte is None:
+        texte = extraire_texte_pdf(chemin_pdf)
     if not texte.strip():
         raise ValueError(
             "Aucun texte extrait (PDF scanné/image ? un OCR serait nécessaire)."
@@ -1145,6 +1151,150 @@ def reclasser_facture(config: dict, chemin_actuel: Path,
     return destination
 
 
+# ---------------------------------------------------------------------------
+# 4 ter. RELEVÉS BANCAIRES
+# ---------------------------------------------------------------------------
+
+# Colonnes du fichier des opérations bancaires (une ligne par opération).
+COLONNES_RELEVES = ["Client", "IBAN", "Période", "Date", "Libellé",
+                    "Détail", "Débit", "Crédit"]
+
+
+def est_releve_bancaire(texte: str) -> bool:
+    """Un PDF est un relevé de compte (et non une facture) si son en-tête
+    mentionne un relevé/solde ET un IBAN."""
+    debut = normaliser(texte[:2500])
+    a_releve = ("releve de compte" in debut or "releves de compte" in debut
+                or "solde au" in debut)
+    return a_releve and "iban" in debut
+
+
+def extraire_operations_releve(texte: str) -> dict:
+    """
+    Analyse un relevé bancaire (format Qonto et proches) :
+
+        Du 01/06/2026 au 30/06/2026 ... IBAN: FR76...
+        Solde au 01/06 + 30689.20 EUR
+        01/06 EURL AB AUTO - 180.00 EUR
+        1/26/100382                      <- ligne de détail de l'opération
+
+    Retourne {"periode_debut", "periode_fin", "iban", "solde_initial",
+    "solde_final", "operations": [{date, libelle, detail, debit, credit}]}.
+    """
+    infos = {"periode_debut": None, "periode_fin": None, "iban": None,
+             "solde_initial": None, "solde_final": None, "operations": []}
+
+    m = re.search(r"Du\s+(\d{2}/\d{2}/\d{4})\s+au\s+(\d{2}/\d{2}/\d{4})", texte)
+    if m:
+        infos["periode_debut"] = _construire_date(
+            (m.group(1)[:2], m.group(1)[3:5], m.group(1)[6:]))
+        infos["periode_fin"] = _construire_date(
+            (m.group(2)[:2], m.group(2)[3:5], m.group(2)[6:]))
+    annee = (infos["periode_fin"] or "").split("-")[0] or str(datetime.now().year)
+
+    m = re.search(r"IBAN\s*:?\s*([A-Z]{2}[0-9]{2}[A-Z0-9]{10,30})", texte)
+    if m:
+        infos["iban"] = m.group(1)
+
+    soldes = re.findall(
+        r"Solde\s+au\s+\d{2}/\d{2}\s*([+-])\s*([\d\s.,]+?)\s*EUR", texte)
+    if soldes:
+        signe, montant = soldes[0]
+        infos["solde_initial"] = (1 if signe == "+" else -1) * (
+            convertir_montant(montant) or 0)
+        signe, montant = soldes[-1]
+        infos["solde_final"] = (1 if signe == "+" else -1) * (
+            convertir_montant(montant) or 0)
+
+    # Lignes à ignorer : en-têtes de colonnes et pieds de page répétés.
+    ignorer = re.compile(
+        r"^(?:Date\s+de\s+valeur|Du\s+\d{2}/\d{2}/\d{4}|Relev[ée]s?\s+de\s+compte"
+        r"|Solde\s+au|Entr[ée]es\s|Sorties\s|IBAN|BIC).*|^.*\(\s*[A-Z]{2}\d{2}[^)]*\)\s*\d+/\d+\s*$",
+        re.IGNORECASE)
+    motif_operation = re.compile(
+        r"^(\d{2}/\d{2})\s+(.+?)\s+([+-])\s*([\d\s.,]+?)\s*EUR\s*$")
+
+    operation = None
+    for ligne in texte.splitlines():
+        ligne = ligne.strip()
+        if not ligne or ignorer.match(ligne):
+            continue
+        m = motif_operation.match(ligne)
+        if m:
+            jour_mois, libelle, signe, montant = m.groups()
+            valeur = convertir_montant(montant)
+            date = _construire_date(
+                (jour_mois[:2], jour_mois[3:5], annee)) or ""
+            operation = {
+                "date": date, "libelle": libelle.strip(), "detail": "",
+                "debit": valeur if signe == "-" else None,
+                "credit": valeur if signe == "+" else None,
+            }
+            infos["operations"].append(operation)
+        elif operation is not None and len(ligne) < 90:
+            # Ligne de détail rattachée à l'opération précédente.
+            operation["detail"] = (operation["detail"] + " " + ligne).strip()
+
+    return infos
+
+
+def traiter_releve(chemin_pdf: Path, texte: str, config: dict,
+                   clients: list[tuple[str, str]]) -> Path:
+    """
+    Traite un relevé bancaire : classement dans le sous-dossier
+    Releves_bancaires du client et ajout des opérations au fichier
+    releves_bancaires.xlsx. Ne touche JAMAIS au tableau de TVA.
+    """
+    infos = extraire_operations_releve(texte)
+    if not infos["operations"]:
+        raise ValueError("Relevé bancaire détecté mais aucune opération lue.")
+
+    client = identifier_client(texte, clients) or DOSSIER_NON_CLASSE
+    mois = (infos["periode_fin"] or datetime.now().strftime("%Y-%m-%d"))[:7]
+
+    dossier = (config["dossier_base"] / nettoyer_nom_fichier(client)
+               / "Releves_bancaires")
+    dossier.mkdir(parents=True, exist_ok=True)
+    destination = dossier / f"Releve_{mois}_{nettoyer_nom_fichier(client)}.pdf"
+    compteur = 1
+    while destination.exists():
+        destination = dossier / (
+            f"Releve_{mois}_{nettoyer_nom_fichier(client)}_v{compteur}.pdf")
+        compteur += 1
+    shutil.move(str(chemin_pdf), str(destination))
+
+    periode = f"{infos['periode_debut'] or '?'} → {infos['periode_fin'] or '?'}"
+    lignes = [{
+        "Client": client, "IBAN": infos["iban"] or "", "Période": periode,
+        "Date": operation["date"], "Libellé": operation["libelle"],
+        "Détail": operation["detail"],
+        "Débit": operation["debit"], "Crédit": operation["credit"],
+    } for operation in infos["operations"]]
+
+    fichier = config["fichier_releves"]
+    if fichier.exists():
+        existant = pd.read_excel(fichier)
+        # Réimporter le même relevé REMPLACE ses anciennes lignes ; on ne
+        # dédoublonne jamais les opérations elles-mêmes (deux péages
+        # identiques le même jour sont deux opérations réelles).
+        meme_releve = ((existant["Client"].astype(str) == client)
+                       & (existant["IBAN"].astype(str) == (infos["iban"] or ""))
+                       & (existant["Période"].astype(str) == periode))
+        df = pd.concat([existant[~meme_releve], pd.DataFrame(lignes)],
+                       ignore_index=True)
+    else:
+        df = pd.DataFrame(lignes)
+    df.reindex(columns=COLONNES_RELEVES).to_excel(fichier, index=False)
+
+    debits = sum(o["debit"] or 0 for o in infos["operations"])
+    credits = sum(o["credit"] or 0 for o in infos["operations"])
+    logger.info(
+        "🏦 RELEVÉ  | %s | %s | %d opération(s) (+%.2f / -%.2f) -> %s",
+        client, periode, len(infos["operations"]), credits, debits,
+        fichier.name)
+    return destination
+
+
 def recalculer_montants_tableau(config: dict) -> tuple[int, int, int]:
     """
     Répare les lignes du tableau global dont le triplet HT/TVA/TTC est
@@ -1227,11 +1377,15 @@ def recalculer_montants_tableau(config: dict) -> tuple[int, int, int]:
 def traiter_facture(chemin_pdf: Path, email_info: dict, config: dict,
                     clients: list[str]) -> bool:
     """
-    Traite UNE facture PDF de bout en bout (analyse -> classement -> Excel).
+    Traite UN PDF de bout en bout. Une facture est analysée, classée et
+    ajoutée au tableau de TVA ; un RELEVÉ BANCAIRE (détecté automatiquement)
+    est classé dans Releves_bancaires/ et ses opérations sont ajoutées au
+    fichier des relevés — jamais au tableau de TVA.
+
     Retourne True en cas de succès, False sinon (le PDF reste alors dans
     le dossier temporaire pour vérification manuelle).
 
-    Un PDF au contenu strictement identique à une facture déjà classée est
+    Un PDF au contenu strictement identique à un document déjà classé est
     un DOUBLON : il est supprimé sans être retraité (pas de double ligne
     dans le tableau Excel).
     """
@@ -1247,7 +1401,18 @@ def traiter_facture(chemin_pdf: Path, email_info: dict, config: dict,
             )
             return True
 
-        donnees = analyser_facture(chemin_pdf, clients, email_info["expediteur"])
+        texte = extraire_texte_pdf(chemin_pdf)
+
+        # Relevé bancaire ? Circuit dédié, hors tableau de TVA.
+        if est_releve_bancaire(texte):
+            destination = traiter_releve(chemin_pdf, texte, config, clients)
+            empreintes[empreinte] = destination.relative_to(
+                config["dossier_base"]).as_posix()
+            sauvegarder_empreintes(config["dossier_base"], empreintes)
+            return True
+
+        donnees = analyser_facture(chemin_pdf, clients,
+                                   email_info["expediteur"], texte=texte)
         destination = classer_facture(chemin_pdf, donnees, config["dossier_base"])
         ajouter_ligne_excel(donnees, destination.name, config["fichier_excel"])
         empreintes[empreinte] = destination.relative_to(

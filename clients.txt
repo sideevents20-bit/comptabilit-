@@ -4,3 +4,4 @@
 # Syntaxe : soit un simple nom, soit "Nom du dossier = variante1, variante2"
 # quand le client apparaît sous plusieurs formes sur les factures.
 ICG 40 = ICG40, I.C.G. 40, SARL ICG 40
+AXLR TRANSPORTS = AXLR
